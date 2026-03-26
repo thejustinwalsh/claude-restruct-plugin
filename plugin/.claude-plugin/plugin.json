@@ -1,0 +1,10 @@
+{
+  "name": "restruct",
+  "description": "Meta-prompt refinement via local LLM — transforms casual prompts into structured, rules-aware agent instructions",
+  "version": "0.1.0",
+  "author": {
+    "name": "tjw"
+  },
+  "keywords": ["prompting", "meta-prompt", "ollama", "refinement", "structured-prompts"],
+  "license": "MIT"
+}

@@ -1,0 +1,4 @@
+# Binaries are built by CI, not committed
+bin/restruct-*
+bin/restruct
+!bin/.gitkeep

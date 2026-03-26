@@ -1,0 +1,5 @@
+{
+  "hook_name": "UserPrompt",
+  "prompt": "hey can you fix the auth bug where tokens expire too fast",
+  "session_id": "test-session-123"
+}
