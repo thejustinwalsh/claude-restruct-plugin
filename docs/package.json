@@ -1,0 +1,13 @@
+{
+  "name": "@restruct/docs",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "retype start",
+    "build": "retype build",
+    "test": "echo 'no tests'"
+  },
+  "devDependencies": {
+    "retypeapp": "^3.0.0"
+  }
+}

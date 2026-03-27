@@ -1,3 +1,9 @@
+---
+label: PRD
+icon: project
+order: 900
+---
+
 # Meta-Prompt Hook System: Implementation Plan
 
 ## Transforming Conversational Prompts into Structured Agent Instructions via Local LLM Preprocessing
@@ -166,55 +172,55 @@ Ollama provides a local OpenAI-compatible API on `localhost:11434`, making integ
 ### 3.2 Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    DEVELOPER                            │
-│                                                         │
-│   "hey can you fix the auth bug where tokens expire     │
-│    too fast"                                            │
-└──────────────┬──────────────────────────────────────────┘
-               │
-               ▼
 ┌──────────────────────────────────────────────────────────┐
-│              META-PROMPT HOOK (PreToolUse)               │
+│                        DEVELOPER                         │
+│                                                          │
+│  "hey can you fix the auth bug where tokens expire       │
+│   too fast"                                              │
+└──────────────────────────┬───────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│              META-PROMPT HOOK (UserPromptSubmit)          │
 │                                                          │
 │  1. Intercept raw user prompt                            │
 │  2. Load agents.md + repo context                        │
 │  3. Send to LOCAL LLM (Ollama)                           │
 │  4. Receive structured prompt                            │
-│  5. Replace user message with structured version         │
+│  5. Inject as additionalContext                          │
 │                                                          │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │          LOCAL LLM (Qwen 2.5 Coder 14B)           │  │
-│  │                                                    │  │
-│  │  System Prompt:                                    │  │
-│  │  "You are a prompt architect. Given a developer's  │  │
-│  │   casual request and the project's rules file,     │  │
-│  │   produce a structured prompt that will guide      │  │
-│  │   Claude to follow the project's patterns."        │  │
-│  │                                                    │  │
-│  │  Input:                                            │  │
-│  │  - Raw user prompt                                 │  │
-│  │  - agents.md contents                              │  │
-│  │  - Recent git context (optional)                   │  │
-│  │                                                    │  │
-│  │  Output:                                           │  │
-│  │  - Structured prompt with:                         │  │
-│  │    • Objective                                     │  │
-│  │    • Constraints from agents.md                    │  │
-│  │    • Expected workflow                             │  │
-│  │    • Anti-patterns to avoid                        │  │
-│  │    • Uncertainty directive                         │  │
-│  └────────────────────────────────────────────────────┘  │
-└──────────────┬───────────────────────────────────────────┘
-               │
-               ▼
+│  ┌──────────────────────────────────────────────────┐    │
+│  │         LOCAL LLM (Qwen 2.5 Coder 14B)          │    │
+│  │                                                  │    │
+│  │  System Prompt:                                  │    │
+│  │  "You are a prompt architect. Given a            │    │
+│  │   developer's casual request and the project's   │    │
+│  │   rules file, produce a structured prompt that   │    │
+│  │   will guide Claude to follow the project's      │    │
+│  │   patterns."                                     │    │
+│  │                                                  │    │
+│  │  Input:                                          │    │
+│  │  - Raw user prompt                               │    │
+│  │  - agents.md contents                            │    │
+│  │  - Recent git context (optional)                 │    │
+│  │                                                  │    │
+│  │  Output:                                         │    │
+│  │  - Structured prompt with:                       │    │
+│  │    • Objective                                   │    │
+│  │    • Constraints from agents.md                  │    │
+│  │    • Expected workflow                           │    │
+│  │    • Anti-patterns to avoid                      │    │
+│  │    • Uncertainty directive                       │    │
+│  └──────────────────────────────────────────────────┘    │
+└──────────────────────────┬───────────────────────────────┘
+                           │
+                           ▼
 ┌──────────────────────────────────────────────────────────┐
-│                    CLAUDE (Agent)                         │
+│                      CLAUDE (Agent)                      │
 │                                                          │
-│  Receives ONLY the structured prompt.                    │
-│  Never sees the raw conversational input.                │
+│  Receives original prompt + hidden structured context.   │
 │  Follows project rules because they're embedded          │
-│  directly in the prompt it receives.                     │
+│  directly in the additionalContext it receives.          │
 │                                                          │
 │  Key behaviors enforced:                                 │
 │  - No probabilistic guessing                             │

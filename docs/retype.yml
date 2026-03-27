@@ -1,0 +1,14 @@
+input: .
+output: .retype
+
+branding:
+  title: Restruct
+  label: Docs
+
+links:
+  - text: GitHub
+    link: https://github.com/tjw/restruct
+    icon: mark-github
+
+footer:
+  copyright: "&copy; Restruct. All rights reserved."

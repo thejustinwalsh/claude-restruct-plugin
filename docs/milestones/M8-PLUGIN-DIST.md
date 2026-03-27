@@ -1,4 +1,4 @@
-# M7: Plugin Distribution & Installation
+# M8: Plugin Distribution & Installation
 
 ## Goal
 
@@ -13,7 +13,7 @@ M6 (CLI UX) — need polished doctor/install commands for the setup flow.
 
 ## Tasks
 
-### 7.1 — Plugin Manifest Finalization
+### 8.1 — Plugin Manifest Finalization
 
 **What:** Finalize `plugin/.claude-plugin/plugin.json` with all required fields.
 
@@ -28,19 +28,18 @@ M6 (CLI UX) — need polished doctor/install commands for the setup flow.
 - `postInstall` — command to run after plugin install (trigger setup wizard)
 - Verify all fields against Claude Code's plugin spec (research current spec)
 
-### 7.2 — Cross-Platform Binary Strategy
+### 8.2 — Cross-Platform Binary Strategy ✅
 
 **What:** Ensure the plugin works on all platforms Claude Code supports.
 
-**Current CI/CD:** Builds for darwin-arm64, darwin-amd64, linux-amd64, linux-arm64. Creates a launcher script that auto-detects platform.
+**Done:** Build system (M8.1) produces cross-compiled binaries for darwin-arm64, darwin-x86_64, linux-x86_64 via `pnpm build`. Binaries committed to `plugin/bin/` for direct GitHub installation.
 
-**Improvements:**
-- **Windows support:** Add windows-amd64 build target. The launcher script needs a `.bat` or `.ps1` equivalent.
-- **Binary naming:** Use `restruct-{os}-{arch}` naming. The launcher/wrapper selects the right one.
-- **Size optimization:** Build with `-ldflags="-s -w"` to strip debug info. Consider UPX compression if binaries exceed 20MB.
-- **Verify Ollama availability per platform:** Ollama supports macOS, Linux, Windows. Document any platform-specific quirks.
+**Remaining:**
+- **Windows support:** Add windows-amd64 target to `xmake.lua` release group
+- **Size optimization:** Build with `-ldflags="-s -w"` to strip debug info. Consider UPX compression if binaries exceed 20MB
+- **Verify Ollama availability per platform:** Document any platform-specific quirks
 
-### 7.3 — Installation Flow
+### 8.3 — Installation Flow
 
 **What:** A smooth installation experience from zero to working.
 
@@ -62,7 +61,7 @@ M6 (CLI UX) — need polished doctor/install commands for the setup flow.
 - Non-interactive mode: `restruct setup --auto` (CI-friendly)
 - The setup skill (`plugin/skills/setup/SKILL.md`) should invoke this
 
-### 7.4 — Setup Skill Update
+### 8.4 — Setup Skill Update
 
 **What:** Update the Claude Code skill to provide a great in-Claude setup experience.
 
@@ -73,7 +72,7 @@ M6 (CLI UX) — need polished doctor/install commands for the setup flow.
 - Refine skill: allows manual refinement from within Claude (`/refine <prompt>`)
 - Add skill: `plugin/skills/status/SKILL.md` — shows current restruct status (model, cache stats, last refinement)
 
-### 7.5 — Uninstall & Cleanup
+### 8.5 — Uninstall & Cleanup
 
 **What:** Clean uninstallation that removes all traces.
 
@@ -84,7 +83,7 @@ M6 (CLI UX) — need polished doctor/install commands for the setup flow.
 - Optionally remove config (`--purge` flag)
 - Print confirmation of what was removed
 
-### 7.6 — Plugin Release Automation
+### 8.6 — Plugin Release Automation
 
 **What:** Automate the release pipeline.
 
@@ -123,7 +122,7 @@ M6 (CLI UX) — need polished doctor/install commands for the setup flow.
 - New: `cli/cmd/setup.go` — interactive setup wizard
 - New: `cli/cmd/uninstall.go` — clean removal
 - `.github/workflows/build.yml` — enhanced release automation
-- `Makefile` — release targets
+- `xmake.lua` — build graph (replaced Makefile)
 
 ## Risk
 

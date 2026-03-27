@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a Go backend (Chi) + React SPA (Vite) that provides real-time visibility into the refinement pipeline, session tracking, prompt rating, and the feedback loop needed for self-improvement. The server runs as a daemon managed by the CLI, with SQLite for persistence.
+Build a Go backend (Chi) + React SPA (Vite) for monitoring, rating, and the feedback loop. The SQLite database is a **shared resource** — the CLI writes to it directly during refinement, and the server reads from it for the dashboard + writes ratings. No server is required for data collection. The server is only needed for the web UI and rating workflow.
 
 ## Depends On
 
@@ -14,59 +14,47 @@ M1 (Hook Protocol) — needs session_id and transcript_path from hooks.
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   React SPA (Vite)                   │
-│                                                      │
-│  ┌──────────┐ ┌──────────┐ ┌───────────┐           │
-│  │ Live Feed│ │ Sessions │ │ Ratings & │           │
-│  │ (SSE)    │ │ Browser  │ │ Feedback  │           │
-│  └──────────┘ └──────────┘ └───────────┘           │
-│                                                      │
-│  ┌──────────┐ ┌──────────┐ ┌───────────┐           │
-│  │ Prompt   │ │ Pipeline │ │ System    │           │
-│  │ Diff View│ │ Metrics  │ │ Health    │           │
-│  └──────────┘ └──────────┘ └───────────┘           │
-└───────────────────┬─────────────────────────────────┘
-                    │ HTTP + SSE
-                    ▼
-┌─────────────────────────────────────────────────────┐
-│              Go Server (Chi + net/http)               │
-│                                                      │
-│  Routes:                                             │
-│  GET  /api/events          → SSE stream              │
-│  GET  /api/sessions        → list sessions           │
-│  GET  /api/sessions/:id    → session detail           │
-│  GET  /api/refinements     → list refinements         │
-│  GET  /api/refinements/:id → refinement detail        │
-│  POST /api/refinements/:id/rate  → rate a refinement │
-│  GET  /api/metrics         → pipeline metrics         │
-│  GET  /api/health          → server health            │
-│  GET  /api/config          → current config           │
-│  GET  /*                   → serve React SPA          │
-│                                                      │
-│  Internal:                                           │
-│  - SSE hub (broadcast to connected clients)          │
-│  - SQLite connection pool                            │
-│  - Background workers (transcript parser, metrics)   │
-└───────────────────┬─────────────────────────────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────────────────┐
-│              SQLite (restruct.db)                     │
-│                                                      │
-│  Tables:                                             │
-│  - sessions         (id, started_at, ended_at, cwd) │
-│  - refinements      (id, session_id, raw_prompt,     │
-│                      refined_prompt, model, latency,  │
-│                      cache_hit, created_at)           │
-│  - ratings          (refinement_id, score, feedback,  │
-│                      created_at)                      │
-│  - pipeline_events  (id, refinement_id, stage,        │
-│                      duration_ms, metadata, ts)       │
-│  - system_prompts   (id, version, content, active,    │
-│                      created_at)                      │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────┐    ┌─────────────────────────────┐
+│    CLI (restruct refine)    │    │   Server (restruct serve)   │
+│                             │    │                             │
+│  Writes directly to DB:     │    │  Reads from DB:             │
+│  • sessions                 │    │  • sessions                 │
+│  • refinements              │    │  • refinements              │
+│  • pipeline_events          │    │  • pipeline_events          │
+│  • cache                    │    │  • cache                    │
+│                             │    │                             │
+│  Runs WITHOUT server.       │    │  Writes to DB:              │
+│  Every CLI command opens    │    │  • ratings                  │
+│  its own SQLite connection  │    │  • system_prompts           │
+│  and closes it when done.   │    │                             │
+│                             │    │  Serves:                    │
+│                             │    │  • React SPA                │
+│                             │    │  • REST API (read + rate)   │
+│                             │    │  • SSE (live updates)       │
+└──────────────┬──────────────┘    └──────────────┬──────────────┘
+               │                                  │
+               └────────────────┬─────────────────┘
+                                ▼
+┌─────────────────────────────────────────────────────────┐
+│            SQLite (restruct.db) — WAL mode              │
+│                                                         │
+│  CLI-owned tables (written by CLI commands):            │
+│  • sessions, refinements, pipeline_events, cache        │
+│                                                         │
+│  Server-owned tables (written by dashboard):            │
+│  • ratings, system_prompts                              │
+│                                                         │
+│  Multiple concurrent readers always OK.                 │
+│  WAL mode allows one writer + many readers.             │
+│  Partitioned ownership avoids write contention.         │
+└─────────────────────────────────────────────────────────┘
 ```
+
+**Key principle: The DB is not the server's DB. It's a shared data store.** The CLI writes refinement data on every hook invocation whether or not the server is running. The server is purely a read+rate UI layer. This means:
+- Data collection works from day one, before the server is even built
+- Multiple CLI instances (concurrent Claude sessions) write concurrently via WAL mode
+- The server can be started/stopped without losing any data
+- No "offline sync" or "startup reconciliation" needed — there's nothing to sync
 
 ---
 
@@ -165,27 +153,34 @@ CREATE INDEX idx_cache_lru ON cache(accessed_at);
 
 **Data access:** Repository pattern — one Go file per table with CRUD methods. No ORM (keep it simple, raw SQL with `database/sql`).
 
-### Write-Through Pattern (`.restruct/` ↔ Global SQLite)
-
-The CLI and server share a two-tier data model:
+### Data Flow (No Server Required)
 
 ```
 Hook fires → restruct refine
-  ├── Write to .restruct/sessions/<id>.json  (fast, local, O(1))
-  ├── Write to .restruct/cache/              (fast local cache lookup)
-  └── Write-through to global SQLite         (dashboard, analytics, ratings)
-       ├── If server running: POST /api/internal/refine (server writes to DB)
-       └── If server NOT running: CLI writes directly to SQLite
+  ├── Opens SQLite connection (WAL mode)
+  ├── Writes session record (upsert)
+  ├── Writes refinement record + pipeline events
+  ├── Writes to cache table
+  ├── Closes SQLite connection
+  └── Also writes .restruct/sessions/<id>.json (fast local session lookup)
 ```
 
-**Multi-instance safety:** SQLite handles concurrent writes via WAL mode. Multiple Claude instances in different projects all write to the same global DB. The `project_path` column partitions data logically.
+**Every CLI command manages its own SQLite connection.** Open → write → close. No long-lived connections, no connection pool needed on the CLI side. SQLite WAL mode allows this to coexist with concurrent readers (the server dashboard) and other CLI writers (concurrent Claude sessions).
 
-**Offline sync:** If the server wasn't running during a session, the `.restruct/sessions/*.json` files contain enough metadata to backfill session records on next server start. The cache write-through to SQLite can be deferred — the local `.restruct/cache/` serves as the fast path.
+**Write ownership is partitioned to avoid contention:**
 
-**Startup reconciliation:** When the server starts, it:
-1. Scans all known project paths for `.restruct/sessions/` files
-2. Reconciles any session records not yet in SQLite
-3. Marks stale sessions (>24h old, PID dead) as ended
+| Table | Written by | Read by |
+|-------|-----------|---------|
+| `sessions` | CLI (`refine`, `session start/end`) | Server (dashboard) |
+| `refinements` | CLI (`refine`) | Server (dashboard, rating association) |
+| `pipeline_events` | CLI (`refine`) | Server (dashboard) |
+| `cache` | CLI (`refine`) | CLI (cache lookup), Server (analytics) |
+| `ratings` | Server (dashboard POST) | Server (dashboard), M10 (analysis) |
+| `system_prompts` | Server (dashboard POST) | CLI (active prompt selection), Server |
+
+No two processes write to the same table in the hot path. The CLI writes refinement data; the server writes user feedback. This eliminates write contention without any coordination protocol.
+
+**`.restruct/sessions/` files** are retained as a fast local index for the CLI to check "is this session already tracked?" without opening SQLite on every invocation. They are NOT the source of truth — SQLite is. The local files are a performance optimization only.
 
 ### 4.2 — Go Server (Chi)
 
@@ -200,28 +195,24 @@ Hook fires → restruct refine
 ```
 server/
 ├── server.go           -- Server struct, Start(), Shutdown()
-├── routes.go           -- Route registration
+├── routes.go           -- Route registration (all read + rate endpoints)
 ├── handlers/
-│   ├── sessions.go     -- Session CRUD
-│   ├── refinements.go  -- Refinement CRUD + rating
-│   ├── metrics.go      -- Aggregated metrics
+│   ├── sessions.go     -- Session reads
+│   ├── refinements.go  -- Refinement reads + rating writes
+│   ├── metrics.go      -- Aggregated metrics (computed from DB)
 │   ├── events.go       -- SSE stream handler
-│   ├── health.go       -- Health check
-│   └── config.go       -- Config endpoint
+│   ├── health.go       -- Health check (Ollama status, DB stats)
+│   ├── config.go       -- Config endpoint
+│   └── prompts.go      -- System prompt management (read/write)
 ├── sse/
-│   └── hub.go          -- SSE broadcast hub (fan-out to connected clients)
-├── db/
-│   ├── db.go           -- SQLite connection, migration runner
-│   ├── sessions.go     -- Session repository
-│   ├── refinements.go  -- Refinement repository
-│   ├── ratings.go      -- Rating repository
-│   ├── events.go       -- Pipeline event repository
-│   └── prompts.go      -- System prompt repository
-├── migrations/
-│   └── 001_initial.sql
+│   └── hub.go          -- SSE broadcast hub (fed by DB poller)
+├── poller/
+│   └── poller.go       -- Polls DB for new refinements, broadcasts to SSE
 └── middleware/
     └── logging.go      -- Request logging middleware
 ```
+
+The server has NO db/ package — it uses `cli/internal/db` (the shared package). The DB layer is not owned by the server.
 
 **SSE Hub:**
 ```go
@@ -247,28 +238,41 @@ Events streamed:
 - `rating:new` — new rating submitted
 - `metric:update` — periodic metrics refresh
 
-### 4.3 — Pipeline Integration (Recording)
+### 4.3 — Pipeline Recording (Direct to SQLite)
 
-**What:** Make the refinement pipeline record every step to the server's database.
+**What:** The refinement pipeline writes every step directly to SQLite. No server involvement.
 
-**Approach:** The pipeline writes to SQLite directly (not via HTTP). The server reads from the same DB. This avoids an HTTP round-trip in the hot path.
-
-**Changes to `pipeline/pipeline.go`:**
+**Implementation:**
 ```go
-type Recorder interface {
-    RecordRefinement(ctx context.Context, r *Refinement) error
-    RecordPipelineEvent(ctx context.Context, e *PipelineEvent) error
+// internal/db/db.go — shared across CLI and server
+type DB struct {
+    pool *sql.DB // SQLite with WAL mode, busy_timeout=5000
 }
+
+func Open(path string) (*DB, error) {
+    pool, err := sql.Open("sqlite", path+"?_journal=WAL&_busy_timeout=5000")
+    // Run migrations on first open
+    ...
+}
+
+type Recorder struct {
+    db *DB
+}
+
+func (r *Recorder) RecordRefinement(ctx context.Context, ref *Refinement) error { ... }
+func (r *Recorder) RecordPipelineEvent(ctx context.Context, evt *PipelineEvent) error { ... }
+func (r *Recorder) UpsertSession(ctx context.Context, sess *Session) error { ... }
 ```
 
-- Pipeline accepts an optional `Recorder`
-- If no recorder (Ollama-only mode, no server), pipeline works exactly as before
-- If recorder present, each stage writes timing + result to DB
-- Recorder also publishes to SSE hub for live streaming
+- The `internal/db` package is shared by both CLI commands and the server
+- CLI opens a connection, writes, closes — no long-lived connection
+- Server opens a long-lived connection for reads and rating writes
+- `busy_timeout=5000` handles the rare case where CLI and server write simultaneously
+- Pipeline accepts a `Recorder` (nil = no recording, for testing)
 
 **Session tracking:**
-- `cmd/refine.go` extracts `session_id` from hook input (available per M1 research)
-- Creates or updates session record in DB
+- `cmd/refine.go` extracts `session_id` from hook input
+- Upserts session record directly in SQLite
 - All refinements linked to session via `session_id` foreign key
 
 ### 4.4 — React SPA (Vite)
@@ -460,55 +464,69 @@ type StreamChunk struct {
 }
 ```
 
-### 4.8 — Hook-to-Server Bridge
+### 4.8 — SSE Live Updates (DB Polling)
 
-**What:** The `restruct refine` command (called by Claude Code hook) communicates with the running server.
+**What:** The server streams live updates to the dashboard via SSE, powered by polling the SQLite DB for new records.
 
-**Flow:**
-```
-Claude Code hook fires
-  → restruct refine (stdin: hook JSON)
-    → Checks if server is running (PID file + health check)
-    → If server running:
-        POST /api/internal/refine {session_id, raw_prompt, ...}
-        Server: runs pipeline, records to DB, streams to SSE, returns refined prompt
-        CLI: outputs hook response JSON
-    → If server NOT running:
-        Run pipeline directly (current behavior, no recording)
-        Print warning to stderr: "restruct server not running, no tracking"
+**Approach:** The server polls the `refinements` and `ratings` tables on a short interval (1-2s) for new records since the last check. When new rows appear, it broadcasts SSE events to connected clients.
+
+```go
+// Background goroutine in the server
+func (s *Server) pollForUpdates(ctx context.Context) {
+    ticker := time.NewTicker(1 * time.Second)
+    var lastRefinementID int64
+    for {
+        select {
+        case <-ticker.C:
+            // SELECT * FROM refinements WHERE id > lastRefinementID
+            newRefinements := s.db.GetRefinementsSince(lastRefinementID)
+            for _, r := range newRefinements {
+                s.sseHub.Broadcast(Event{Type: "refinement:new", Data: r})
+                lastRefinementID = r.ID
+            }
+        case <-ctx.Done():
+            return
+        }
+    }
+}
 ```
 
-**Internal API (not exposed to SPA):**
-```
-POST /api/internal/refine    -- pipeline execution + recording
-POST /api/internal/session   -- session lifecycle events
-```
+**Why polling instead of SQLite update hooks?** `modernc.org/sqlite` (pure Go) doesn't reliably support `sqlite3_update_hook` across connections. Polling at 1s is simple, reliable, and more than fast enough for a monitoring dashboard. The DB is local — a SELECT with an index on `id` is sub-millisecond.
 
-This keeps the hook CLI thin — it's just a bridge to the server. All logic lives in the server.
+**No internal API needed.** The CLI never talks to the server. It writes to SQLite. The server discovers new data by polling. This is the simplest possible architecture with zero coordination.
 
 ---
 
 ## Acceptance Criteria
 
+- [ ] Shared `internal/db` package with WAL mode, used by both CLI and server
 - [ ] SQLite schema with migrations, repository pattern data access
-- [ ] Chi server with REST API + SSE streaming
-- [ ] Pipeline records all refinements and stage timings to DB
+- [ ] CLI writes refinements/sessions/pipeline_events directly to SQLite (no server needed)
+- [ ] Chi server reads from SQLite, writes only ratings and system_prompts
+- [ ] SSE live updates via DB polling (1s interval)
 - [ ] React SPA with dashboard, session browser, refinement diff, rating widget
 - [ ] Vite dev server proxies to Go backend; production uses go:embed
 - [ ] `restruct serve --daemon` manages background server with PID file
-- [ ] Ollama streaming shows real-time refinement progress
-- [ ] Hook CLI bridges to server when running, falls back to direct execution
+- [ ] Ollama streaming shows real-time refinement progress in dashboard
 
 ## New Files
 
 ```
-server/                          -- Go server package
+cli/internal/db/                 -- Shared DB package (CLI + server)
+├── db.go                        -- Open, migrate, WAL config
+├── sessions.go                  -- Session CRUD
+├── refinements.go               -- Refinement CRUD
+├── ratings.go                   -- Rating CRUD (server-side writes)
+├── events.go                    -- Pipeline event CRUD
+├── prompts.go                   -- System prompt CRUD
+├── cache.go                     -- Cache table CRUD
+└── migrations/001_initial.sql
+
+server/                          -- Go server package (reads DB + writes ratings)
 ├── server.go
 ├── routes.go
 ├── handlers/*.go
 ├── sse/hub.go
-├── db/*.go
-├── migrations/001_initial.sql
 └── middleware/logging.go
 
 web/                             -- React SPA

@@ -1,0 +1,108 @@
+{
+  "version": "3.12.0",
+  "created": "2026-03-27T04:09:07Z",
+  "files": [
+    {
+      "path": ".nojekyll"
+    },
+    {
+      "path": "404.html"
+    },
+    {
+      "path": "index.html"
+    },
+    {
+      "path": "milestones/index.html"
+    },
+    {
+      "path": "milestones/m1-hook-protocol/index.html"
+    },
+    {
+      "path": "milestones/m10-self-improve/index.html"
+    },
+    {
+      "path": "milestones/m2-core-pipeline/index.html"
+    },
+    {
+      "path": "milestones/m3-prompt-engine/index.html"
+    },
+    {
+      "path": "milestones/m4-server-dashboard/index.html"
+    },
+    {
+      "path": "milestones/m5-rules-engine/index.html"
+    },
+    {
+      "path": "milestones/m6-cache-perf/index.html"
+    },
+    {
+      "path": "milestones/m7-cli-ux/index.html"
+    },
+    {
+      "path": "milestones/m8-plugin-dist/index.html"
+    },
+    {
+      "path": "milestones/m8.1-build-system/index.html"
+    },
+    {
+      "path": "milestones/m9-testing/index.html"
+    },
+    {
+      "path": "package.json"
+    },
+    {
+      "path": "prd/index.html"
+    },
+    {
+      "path": "reference/hook-contract/index.html"
+    },
+    {
+      "path": "reference/index.html"
+    },
+    {
+      "path": "resources/css/retype.css"
+    },
+    {
+      "path": "resources/fonts/Inter-italic-latin-var.woff2"
+    },
+    {
+      "path": "resources/fonts/Inter-roman-latin-var.woff2"
+    },
+    {
+      "path": "resources/js/config.js"
+    },
+    {
+      "path": "resources/js/lunr.js"
+    },
+    {
+      "path": "resources/js/prism.js"
+    },
+    {
+      "path": "resources/js/retype.js"
+    },
+    {
+      "path": "resources/js/search.json"
+    },
+    {
+      "path": "resources/lunr.js.LICENSE.txt"
+    },
+    {
+      "path": "resources/mermaid.js.LICENSE.txt"
+    },
+    {
+      "path": "resources/prism.js.LICENSE.txt"
+    },
+    {
+      "path": "resources/retype.js.LICENSE.txt"
+    },
+    {
+      "path": "resources/retype.LICENSE.txt"
+    },
+    {
+      "path": "robots.txt"
+    },
+    {
+      "path": "sitemap.xml.gz"
+    }
+  ]
+}

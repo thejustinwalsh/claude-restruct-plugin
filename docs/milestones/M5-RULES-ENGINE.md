@@ -34,14 +34,15 @@ M2 (Core Pipeline) — needs stable pipeline to integrate into.
 
 **What:** When rules files are large, extract only the sections relevant to the user's request.
 
-**Approach (simple, no ML):**
+**Approach (LLM-assisted):**
 1. Parse rules files into sections (by markdown headers)
-2. Extract keywords from the user's prompt (file names, function names, technology terms)
-3. Score each rules section by keyword overlap
-4. Include: all sections that score above threshold + always-include sections (marked with a convention like `<!-- always -->` or `## [ALWAYS]`)
-5. If total rules content < 500 lines, skip filtering and include everything
+2. If total rules content < 500 lines, skip filtering and include everything
+3. For large rules files: send the section headers + user prompt to the local LLM as a lightweight pre-pass: "Given this user request, which of these rule sections are relevant? Return the section numbers."
+4. Include: all relevant sections + always-include sections (marked with `<!-- always -->` or `## [ALWAYS]`)
 
-**Why not use the LLM for filtering?** Adding another LLM call doubles latency. Keyword matching is fast and sufficient for v1.
+**Why use the LLM instead of keyword matching?** The local LLM is free and fast enough. Keyword matching produces brittle results — it misses semantic relevance (e.g., a rule about "error handling" is relevant to a prompt about "fix the crash" but shares no keywords). A 1-2 second LLM call to select the right rules is a better investment than shipping a half-relevant refinement that causes Claude to ask clarifying questions. Reduced rework is the goal, not minimal latency.
+
+**Fallback:** If the pre-pass LLM call fails, include all rules (same as <500 line case).
 
 ### 4.3 — Smart Git Context
 
@@ -103,7 +104,7 @@ M2 (Core Pipeline) — needs stable pipeline to integrate into.
 ## Acceptance Criteria
 
 - [ ] Hierarchical rules loading with project > directory > global precedence
-- [ ] Keyword-based relevance filtering for large rules files
+- [ ] LLM-assisted relevance filtering for large rules files (with fallback to include-all)
 - [ ] Git context includes changed files and file-prompt correlation
 - [ ] Follow-up prompts detected and handled (passthrough or context-aware)
 - [ ] File mentions extract targeted context
@@ -115,9 +116,9 @@ M2 (Core Pipeline) — needs stable pipeline to integrate into.
 - `cli/internal/git/context.go` — enhanced git context
 - `cli/internal/pipeline/pipeline.go` — session memory, follow-up detection
 - `cli/internal/prompt/builder.go` — structured rules in prompt
-- New: `cli/internal/rules/filter.go` — keyword-based section filtering
+- New: `cli/internal/rules/filter.go` — LLM-assisted section filtering
 - New: `cli/internal/context/file_context.go` — file mention detection and context
 
 ## Risk
 
-**Medium.** Individually each task is straightforward. The risk is in over-engineering — keep the relevance filtering simple (keyword matching, not semantic search) and the file context lightweight.
+**Medium.** Individually each task is straightforward. The risk is in the LLM pre-pass for rules filtering — it needs to be reliable and its prompt well-tested. If it produces bad selections, the refinement quality degrades. Mitigate with the fallback (include everything on failure) and test with the evaluation corpus from M9.

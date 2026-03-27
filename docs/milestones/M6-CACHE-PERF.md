@@ -2,7 +2,7 @@
 
 ## Goal
 
-Ensure the refinement pipeline adds minimal latency (<2s target) through smart caching, model preloading, and pipeline optimization. Cache is two-tier: fast local files in `.restruct/cache/` with write-through to global SQLite (M4).
+Avoid redundant LLM calls through smart caching, and ensure the model is warm when needed. The goal is NOT to minimize latency at all costs — a thorough 10s refinement that prevents rework is better than a fast 1s refinement that misses context. Caching targets the case where the exact same prompt+rules combination has already been refined — no point re-running it.
 
 ## Depends On
 
@@ -32,7 +32,7 @@ Ensure the refinement pipeline adds minimal latency (<2s target) through smart c
 Lookup path:
 1. Check .restruct/cache/<hash>.json  (local file, <1ms)
 2. If miss → check SQLite cache table   (global DB, <5ms)
-3. If miss → run Ollama refinement       (500ms-2s)
+3. If miss → run Ollama refinement       (5-30s depending on prompt complexity)
 4. Write result → .restruct/cache/ AND SQLite cache table
 
 Why two tiers:
@@ -77,35 +77,27 @@ Why two tiers:
   - Or implementing a heartbeat that refreshes keep_alive periodically while Claude Code is active
 - **Background loading:** The `model load` call must be non-blocking (fire-and-forget). If the model isn't loaded when the first prompt arrives, the pipeline should wait (up to timeout) rather than failing.
 
-### 5.5 — Pipeline Stage Timing
+### 5.5 — Pipeline Stage Timing (Observability)
 
-**What:** Measure and report timing for each pipeline stage to identify bottlenecks.
+**What:** Measure and report timing for each pipeline stage for dashboard visibility and debugging — NOT for enforcement.
 
 **Stages to time:**
-1. Rules loading (expect: <10ms)
-2. Cache lookup (expect: <5ms)
-3. Git context gathering (expect: <100ms)
-4. Prompt building (expect: <1ms)
-5. Ollama inference (expect: 500ms-2s)
-6. Output validation (expect: <1ms)
-7. Cache write (expect: <10ms)
+1. Rules loading
+2. Cache lookup
+3. Git context gathering
+4. Prompt building
+5. Ollama inference
+6. Output validation
+7. Cache write
 
 **Implementation:**
 - Each stage records start/end time
 - Total pipeline time logged at INFO level
 - Individual stage times logged at DEBUG level
 - `restruct refine --timing` flag prints timing breakdown to stderr
+- All timing data recorded to SQLite for dashboard analytics (M4)
 
-### 5.6 — Latency Budget Enforcement
-
-**What:** If total pipeline time exceeds the latency budget, abort and return raw prompt.
-
-**Requirements:**
-- Default budget: 5s (configurable)
-- Ollama inference gets its own sub-budget (budget - overhead, typically budget - 500ms)
-- If Ollama inference exceeds sub-budget, cancel the request and return raw prompt
-- Log a warning with timing breakdown when budget is exceeded
-- Users can increase budget via config for slower hardware
+**No latency budget enforcement.** The safety-net timeout from M2 (120s default, stall detection at 30s no-tokens) handles genuinely stuck requests. A healthy refinement that takes 20s because the prompt is complex should complete successfully.
 
 ---
 
@@ -114,18 +106,16 @@ Why two tiers:
 - [ ] Cache keys normalized and model-aware
 - [ ] TTL-based expiration with LRU eviction
 - [ ] Model preloading works via SessionStart hook
-- [ ] Every pipeline stage is timed and logged
-- [ ] Latency budget enforced; over-budget returns raw prompt
-- [ ] Median refinement latency <2s on 16GB M-series Mac
+- [ ] Every pipeline stage is timed and logged (observability, not enforcement)
 
 ## Files Modified
 
 - `cli/internal/cache/store.go` — normalization, TTL, eviction, manifest
 - `cli/internal/cache/store_test.go` — new test cases
-- `cli/internal/pipeline/pipeline.go` — timing, budget enforcement
-- `cli/internal/config/config.go` — cache TTL, max entries, latency budget config
+- `cli/internal/pipeline/pipeline.go` — timing (observability)
+- `cli/internal/config/config.go` — cache TTL, max entries config
 - `cli/cmd/refine.go` — `--timing` flag
 
 ## Risk
 
-**Low.** Caching and performance work is well-understood. The main risk is premature optimization — measure first (5.5), then optimize what's actually slow.
+**Low.** Caching is well-understood. The main risk is premature optimization — measure first (5.5), and remember that LLM inference time is not wasted time. A cache hit is great, but a cache miss that produces a thorough refinement is still a win.
