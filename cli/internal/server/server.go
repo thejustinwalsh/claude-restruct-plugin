@@ -64,6 +64,11 @@ func New(database *db.DB, port string, devMode bool, webFS fs.FS) *Server {
 		r.Get("/refinements", s.handleListRefinements)
 		r.Get("/refinements/{id}", s.handleGetRefinement)
 		r.Get("/refinements/{id}/events", s.handleRefinementEvents)
+
+		r.Post("/stream/start", s.handleStreamStart)
+		r.Post("/stream/token", s.handleStreamToken)
+		r.Post("/stream/done", s.handleStreamDone)
+		r.Post("/stream/error", s.handleStreamError)
 	})
 
 	// Serve embedded SPA in production (non-dev mode)

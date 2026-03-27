@@ -1,4 +1,4 @@
-# M4: Rules Engine & Context Gathering
+# M5: Rules Engine & Context Gathering
 
 ## Goal
 
@@ -12,7 +12,7 @@ M2 (Core Pipeline) — needs stable pipeline to integrate into.
 
 ## Tasks
 
-### 4.1 — Hierarchical Rules Loading
+### 5.1 — Hierarchical Rules Loading
 
 **What:** Support rules from multiple levels with clear precedence.
 
@@ -30,7 +30,7 @@ M2 (Core Pipeline) — needs stable pipeline to integrate into.
 - Each `RuleSet` has: source file, priority level, content
 - The prompt builder receives structured rules, not a raw concatenation
 
-### 4.2 — Rules Relevance Filtering
+### 5.2 — Rules Relevance Filtering
 
 **What:** When rules files are large, extract only the sections relevant to the user's request.
 
@@ -44,7 +44,7 @@ M2 (Core Pipeline) — needs stable pipeline to integrate into.
 
 **Fallback:** If the pre-pass LLM call fails, include all rules (same as <500 line case).
 
-### 4.3 — Smart Git Context
+### 5.3 — Smart Git Context
 
 **What:** Improve git context gathering beyond basic branch/log/diff.
 
@@ -57,7 +57,7 @@ M2 (Core Pipeline) — needs stable pipeline to integrate into.
 - **Stash awareness:** Note if there are stashed changes (might be relevant context)
 - **Budget:** Total git context should not exceed 50 lines. Truncate least-relevant parts first.
 
-### 4.4 — Conversation-Aware Refinement
+### 5.4 — Conversation-Aware Refinement
 
 **What:** When the user's prompt is a follow-up in a conversation, include enough context for the local LLM to produce a good refinement.
 
@@ -71,7 +71,7 @@ M2 (Core Pipeline) — needs stable pipeline to integrate into.
   - For medium follow-ups with new information: refine with a note that this continues a conversation
 - **Session memory (lightweight):** Cache the last refined prompt per session. When a new prompt arrives, include the previous refined prompt as context. This helps the LLM understand what "that" or "it" refers to.
 
-### 4.5 — File Mention Detection
+### 5.5 — File Mention Detection
 
 **What:** When the user mentions specific files, extract file-level context to improve refinement.
 
@@ -81,12 +81,12 @@ M2 (Core Pipeline) — needs stable pipeline to integrate into.
 
 **Context extraction for mentioned files:**
 - File's first 10 lines (usually imports/header comments showing purpose)
-- File's directory-level rules (from 4.1)
+- File's directory-level rules (from 5.1)
 - File's recent git history (2-3 commits)
 
 **Budget:** Max 30 lines of file context per mentioned file, max 3 files.
 
-### 4.6 — Rules Loader Tests
+### 5.6 — Rules Loader Tests
 
 **What:** Unit tests for the rules engine.
 

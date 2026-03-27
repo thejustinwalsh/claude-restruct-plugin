@@ -102,7 +102,7 @@ func NewWithDeps(llm LLMClient, rl RulesLoader, gp GitProvider, cs CacheStore, c
 
 // Refine takes a raw user prompt and returns structured, rules-aware additional context.
 // On any failure, returns an error — the caller (cmd/refine.go) decides to passthrough.
-func (p *Pipeline) Refine(ctx context.Context, rawPrompt string) (*RefineResult, error) {
+func (p *Pipeline) Refine(ctx context.Context, rawPrompt string, sink ollama.TokenSink) (*RefineResult, error) {
 	start := time.Now()
 	result := &RefineResult{}
 	timer := func(stage string, fn func()) {
@@ -196,7 +196,7 @@ func (p *Pipeline) Refine(ctx context.Context, rawPrompt string) (*RefineResult,
 			ctx, systemMsg, userMsg,
 			float32(p.cfg.Refinement.Temperature),
 			p.cfg.Refinement.MaxTokens,
-			nil, // no TokenSink for now; M4 will add SSE sink
+			sink,
 		)
 	})
 	if llmErr != nil {

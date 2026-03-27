@@ -43,6 +43,24 @@ func (r *Recorder) RecordRefinement(ref *Refinement) int64 {
 	return id
 }
 
+// RecordPendingRefinement creates a refinement with status "pending" before the LLM call.
+// Returns the refinement ID for use with streaming and later completion.
+func (r *Recorder) RecordPendingRefinement(ref *Refinement) int64 {
+	ref.Status = "pending"
+	return r.RecordRefinement(ref)
+}
+
+// CompleteRefinement updates a pending refinement with the final results.
+func (r *Recorder) CompleteRefinement(id int64, ref *Refinement) {
+	if id == 0 {
+		return
+	}
+	ref.Status = "complete"
+	if err := r.db.UpdateRefinement(id, ref); err != nil {
+		slog.Warn("failed to complete refinement", "error", err, "id", id)
+	}
+}
+
 // RecordPipelineEvent writes a pipeline stage timing record.
 func (r *Recorder) RecordPipelineEvent(refinementID int64, stage string, durationMs int64, success bool, metadata string) {
 	if refinementID == 0 {

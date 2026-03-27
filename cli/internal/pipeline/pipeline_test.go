@@ -87,7 +87,7 @@ func TestRefine_HappyPath(t *testing.T) {
 	cache := newMockCache()
 
 	p := NewWithDeps(llm, rules, gitP, cache, defaultCfg())
-	result, err := p.Refine(context.Background(), "fix the auth bug where tokens expire too fast")
+	result, err := p.Refine(context.Background(), "fix the auth bug where tokens expire too fast", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestRefine_CacheHit(t *testing.T) {
 	cache.store["fix the auth bugabc123"] = "cached refinement"
 
 	p := NewWithDeps(llm, rules, &mockGit{ctx: &git.Context{}}, cache, defaultCfg())
-	result, err := p.Refine(context.Background(), "fix the auth bug")
+	result, err := p.Refine(context.Background(), "fix the auth bug", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestRefine_CacheHit(t *testing.T) {
 func TestRefine_OllamaUnavailable(t *testing.T) {
 	llm := &mockLLM{available: false}
 	p := NewWithDeps(llm, &mockRules{}, &mockGit{ctx: &git.Context{}}, newMockCache(), defaultCfg())
-	_, err := p.Refine(context.Background(), "fix the auth bug where tokens expire")
+	_, err := p.Refine(context.Background(), "fix the auth bug where tokens expire", nil)
 	if err == nil {
 		t.Fatal("expected error when Ollama unavailable")
 	}
@@ -142,7 +142,7 @@ func TestRefine_OllamaError(t *testing.T) {
 		chatErr:   fmt.Errorf("503 Service Unavailable"),
 	}
 	p := NewWithDeps(llm, &mockRules{}, &mockGit{ctx: &git.Context{}}, newMockCache(), defaultCfg())
-	_, err := p.Refine(context.Background(), "fix the auth bug where tokens expire")
+	_, err := p.Refine(context.Background(), "fix the auth bug where tokens expire", nil)
 	if err == nil {
 		t.Fatal("expected error on Ollama failure")
 	}
@@ -154,7 +154,7 @@ func TestRefine_EmptyOutput(t *testing.T) {
 		chatResponse: "",
 	}
 	p := NewWithDeps(llm, &mockRules{}, &mockGit{ctx: &git.Context{}}, newMockCache(), defaultCfg())
-	_, err := p.Refine(context.Background(), "fix the auth bug where tokens expire")
+	_, err := p.Refine(context.Background(), "fix the auth bug where tokens expire", nil)
 	if err == nil {
 		t.Fatal("expected validation error for empty output")
 	}
@@ -169,7 +169,7 @@ func TestRefine_OutputShorterThanInput(t *testing.T) {
 		chatResponse: "ok",
 	}
 	p := NewWithDeps(llm, &mockRules{}, &mockGit{ctx: &git.Context{}}, newMockCache(), defaultCfg())
-	_, err := p.Refine(context.Background(), "fix the authentication token expiry bug in the user session module")
+	_, err := p.Refine(context.Background(), "fix the authentication token expiry bug in the user session module", nil)
 	if err == nil {
 		t.Fatal("expected validation error for too-short output")
 	}
@@ -184,7 +184,7 @@ func TestRefine_SystemPromptLeak(t *testing.T) {
 		chatResponse: "You are a Prompt Architect that helps transform prompts into structured format with proper objectives and constraints",
 	}
 	p := NewWithDeps(llm, &mockRules{}, &mockGit{ctx: &git.Context{}}, newMockCache(), defaultCfg())
-	_, err := p.Refine(context.Background(), "fix the auth bug")
+	_, err := p.Refine(context.Background(), "fix the auth bug", nil)
 	if err == nil {
 		t.Fatal("expected validation error for system prompt leak")
 	}
@@ -200,7 +200,7 @@ func TestRefine_EmptyRules(t *testing.T) {
 	}
 	rules := &mockRules{content: "", loadErr: fmt.Errorf("no rules files found")}
 	p := NewWithDeps(llm, rules, &mockGit{ctx: &git.Context{}}, newMockCache(), defaultCfg())
-	result, err := p.Refine(context.Background(), "fix the auth bug where tokens expire")
+	result, err := p.Refine(context.Background(), "fix the auth bug where tokens expire", nil)
 	if err != nil {
 		t.Fatalf("should succeed without rules, got: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestRefine_GitContextFails(t *testing.T) {
 	}
 	gitP := &mockGit{ctx: &git.Context{}, getErr: fmt.Errorf("not a git repo")}
 	p := NewWithDeps(llm, &mockRules{}, gitP, newMockCache(), defaultCfg())
-	result, err := p.Refine(context.Background(), "fix the auth bug where tokens expire")
+	result, err := p.Refine(context.Background(), "fix the auth bug where tokens expire", nil)
 	if err != nil {
 		t.Fatalf("should succeed without git context, got: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestRefine_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_, err := p.Refine(ctx, "fix the auth bug where tokens expire")
+	_, err := p.Refine(ctx, "fix the auth bug where tokens expire", nil)
 	if err == nil {
 		t.Fatal("expected error on context cancellation")
 	}
@@ -249,7 +249,7 @@ func TestRefine_LongRunningSuccess(t *testing.T) {
 		chatDelay:    200 * time.Millisecond,
 	}
 	p := NewWithDeps(llm, &mockRules{}, &mockGit{ctx: &git.Context{}}, newMockCache(), defaultCfg())
-	result, err := p.Refine(context.Background(), "fix the auth bug")
+	result, err := p.Refine(context.Background(), "fix the auth bug", nil)
 	if err != nil {
 		t.Fatalf("long-running refinement should succeed, got: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestRefine_ModelEnsureFailsGracefully(t *testing.T) {
 	}
 	p := NewWithDeps(llm, &mockRules{}, &mockGit{ctx: &git.Context{}}, newMockCache(), defaultCfg())
 	// Should still attempt chat even if ensure fails (model might already be loaded)
-	result, err := p.Refine(context.Background(), "fix the auth bug where tokens expire")
+	result, err := p.Refine(context.Background(), "fix the auth bug where tokens expire", nil)
 	if err != nil {
 		t.Fatalf("should attempt chat even after ensure failure: %v", err)
 	}

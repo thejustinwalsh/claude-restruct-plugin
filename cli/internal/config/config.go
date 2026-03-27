@@ -13,6 +13,11 @@ type Config struct {
 	Refinement RefinementConfig `mapstructure:"refinement"`
 	Cache      CacheConfig      `mapstructure:"cache"`
 	Rules      RulesConfig      `mapstructure:"rules"`
+	Server     ServerConfig     `mapstructure:"server"`
+}
+
+type ServerConfig struct {
+	Port string `mapstructure:"port"`
 }
 
 type OllamaConfig struct {
@@ -67,6 +72,9 @@ func Defaults() *Config {
 		Rules: RulesConfig{
 			Files: []string{"agents.md", "CLAUDE.md", ".claude/rules.md"},
 		},
+		Server: ServerConfig{
+			Port: "8377",
+		},
 	}
 }
 
@@ -87,6 +95,7 @@ func LoadFromViper() (*Config, error) {
 	viper.SetDefault("cache.enabled", cfg.Cache.Enabled)
 	viper.SetDefault("cache.dir", cfg.Cache.Dir)
 	viper.SetDefault("rules.files", cfg.Rules.Files)
+	viper.SetDefault("server.port", cfg.Server.Port)
 
 	if err := viper.Unmarshal(cfg); err != nil {
 		return nil, err

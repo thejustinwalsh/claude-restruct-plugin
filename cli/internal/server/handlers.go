@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/tjw/restruct/internal/server/sse"
 )
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
@@ -146,4 +147,61 @@ func (s *Server) handleRefinementEvents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, events)
+}
+
+// --- Stream endpoints (CLI → Server → SSE clients) ---
+
+func (s *Server) handleStreamStart(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		RefinementID int64  `json:"refinement_id"`
+		SessionID    string `json:"session_id"`
+		RawPrompt    string `json:"raw_prompt"`
+		Model        string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	s.hub.Broadcast(sse.Event{Type: "refinement:stream-start", Data: payload})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleStreamToken(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		RefinementID int64  `json:"refinement_id"`
+		Tokens       string `json:"tokens"`
+		SeqStart     int    `json:"seq_start"`
+		SeqEnd       int    `json:"seq_end"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	s.hub.Broadcast(sse.Event{Type: "refinement:streaming", Data: payload})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleStreamDone(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		RefinementID int64 `json:"refinement_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	s.hub.Broadcast(sse.Event{Type: "refinement:stream-end", Data: payload})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleStreamError(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		RefinementID int64  `json:"refinement_id"`
+		Error        string `json:"error"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	s.hub.Broadcast(sse.Event{Type: "refinement:stream-error", Data: payload})
+	w.WriteHeader(http.StatusNoContent)
 }

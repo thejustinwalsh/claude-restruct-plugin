@@ -1,0 +1,15 @@
+pre-commit:
+  parallel: true
+  commands:
+    format:
+      glob: "web/src/**/*.{ts,tsx,css}"
+      run: npx prettier --write {staged_files} && git add {staged_files}
+      skip_output:
+        - meta
+        - success
+    lint-fix:
+      glob: "web/src/**/*.{ts,tsx}"
+      run: npx eslint --fix {staged_files} || true && git add {staged_files}
+      skip_output:
+        - meta
+        - success

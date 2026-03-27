@@ -135,6 +135,7 @@ type Refinement struct {
 	CacheHit      bool      `json:"cache_hit"`
 	Passthrough   bool      `json:"passthrough"`
 	OutputValid   *bool     `json:"output_valid,omitempty"`
+	Status        string    `json:"status"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -201,15 +202,35 @@ func (d *DB) GetSession(id string) (*Session, error) {
 // --- Refinement operations ---
 
 func (d *DB) InsertRefinement(r *Refinement) (int64, error) {
+	status := r.Status
+	if status == "" {
+		status = "complete"
+	}
 	res, err := d.pool.Exec(`
-		INSERT INTO refinements (session_id, project_path, raw_prompt, refined_prompt, model, temperature, latency_ms, cache_hit, passthrough, output_valid)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.SessionID, r.ProjectPath, r.RawPrompt, r.RefinedPrompt, r.Model, r.Temperature, r.LatencyMs, r.CacheHit, r.Passthrough, r.OutputValid,
+		INSERT INTO refinements (session_id, project_path, raw_prompt, refined_prompt, model, temperature, latency_ms, cache_hit, passthrough, output_valid, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.SessionID, r.ProjectPath, r.RawPrompt, r.RefinedPrompt, r.Model, r.Temperature, r.LatencyMs, r.CacheHit, r.Passthrough, r.OutputValid, status,
 	)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+func (d *DB) UpdateRefinement(id int64, r *Refinement) error {
+	status := r.Status
+	if status == "" {
+		status = "complete"
+	}
+	_, err := d.pool.Exec(`
+		UPDATE refinements SET
+			refined_prompt = ?, model = ?, temperature = ?, latency_ms = ?,
+			cache_hit = ?, passthrough = ?, output_valid = ?, status = ?
+		WHERE id = ?`,
+		r.RefinedPrompt, r.Model, r.Temperature, r.LatencyMs,
+		r.CacheHit, r.Passthrough, r.OutputValid, status, id,
+	)
+	return err
 }
 
 func (d *DB) ListRefinements(limit, offset int) ([]Refinement, error) {
@@ -246,7 +267,7 @@ func (d *DB) GetRefinement(id int64) (*Refinement, error) {
 func (d *DB) GetRefinementsSince(lastID int64, limit int) ([]Refinement, error) {
 	rows, err := d.pool.Query(`
 		SELECT id, session_id, project_path, raw_prompt, refined_prompt, model, temperature, latency_ms, cache_hit, passthrough, output_valid, created_at
-		FROM refinements WHERE id > ? ORDER BY id ASC LIMIT ?`, lastID, limit)
+		FROM refinements WHERE id > ? AND status = 'complete' ORDER BY id ASC LIMIT ?`, lastID, limit)
 	if err != nil {
 		return nil, err
 	}

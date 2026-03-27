@@ -13,6 +13,7 @@ import (
 	"github.com/tjw/restruct/internal/hook"
 	"github.com/tjw/restruct/internal/pipeline"
 	"github.com/tjw/restruct/internal/session"
+	"github.com/tjw/restruct/internal/sink"
 )
 
 var refineCmd = &cobra.Command{
@@ -93,38 +94,52 @@ are appended as additional context that guides Claude's behavior.`,
 			return hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
 		}
 
+		// Create pending refinement record before LLM call (needed for streaming ID)
+		var refID int64
+		if recorder != nil {
+			refID = recorder.RecordPendingRefinement(&db.Refinement{
+				SessionID:   input.SessionID,
+				ProjectPath: cwd,
+				RawPrompt:   input.Prompt,
+				Model:       cfg.Ollama.Model,
+				Temperature: cfg.Refinement.Temperature,
+			})
+		}
+
+		// Create streaming sink (best-effort, nil if server unavailable)
+		serverURL := fmt.Sprintf("http://localhost:%s", cfg.Server.Port)
+		tokenSink := sink.NewHttpTokenSink(serverURL, refID, input.SessionID)
+		if tokenSink != nil {
+			tokenSink.Start(input.Prompt, cfg.Ollama.Model)
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), cfg.Ollama.RequestTimeout)
 		defer cancel()
 
-		result, err := p.Refine(ctx, input.Prompt)
+		result, err := p.Refine(ctx, input.Prompt, tokenSink)
 		if err != nil {
 			slog.Warn("refinement failed, passing through", "error", err)
-			if recorder != nil {
+			if recorder != nil && refID > 0 {
 				valid := false
-				recorder.RecordRefinement(&db.Refinement{
-					SessionID:   input.SessionID,
-					ProjectPath: cwd,
-					RawPrompt:   input.Prompt,
+				recorder.CompleteRefinement(refID, &db.Refinement{
 					Model:       cfg.Ollama.Model,
 					OutputValid: &valid,
+					Status:      "failed",
 				})
 			}
 			return hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
 		}
 
-		// Record to DB
-		if recorder != nil {
+		// Complete the refinement record with final results
+		if recorder != nil && refID > 0 {
 			valid := true
-			refID := recorder.RecordRefinement(&db.Refinement{
-				SessionID:   input.SessionID,
-				ProjectPath: cwd,
-				RawPrompt:   input.Prompt,
+			recorder.CompleteRefinement(refID, &db.Refinement{
 				RefinedPrompt: &result.Refined,
-				Model:       cfg.Ollama.Model,
-				Temperature: cfg.Refinement.Temperature,
-				LatencyMs:   result.TotalTime.Milliseconds(),
-				CacheHit:    result.CacheHit,
-				OutputValid: &valid,
+				Model:         cfg.Ollama.Model,
+				Temperature:   cfg.Refinement.Temperature,
+				LatencyMs:     result.TotalTime.Milliseconds(),
+				CacheHit:      result.CacheHit,
+				OutputValid:   &valid,
 			})
 			for _, t := range result.Timings {
 				recorder.RecordPipelineEvent(refID, t.Stage, t.Duration.Milliseconds(), true, "")
