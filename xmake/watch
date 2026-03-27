@@ -1,0 +1,105 @@
+#!/bin/sh
+# Dev watch wrapper: build, run, watch, rebuild, restart.
+# Bypasses npm spawnSync bug (https://github.com/xmake-io/xmake-wheel/issues/12)
+#
+# Usage: xmake/watch -d cli -- cli serve --port 8377 --verbose
+#   -d DIR    directory to watch (passed to xmake watch)
+#   -- TARGET ARGS...   xmake target + args to run
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SYS_OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m)
+XMAKE="$ROOT/node_modules/xmake-build-system/prebuilds/xmake-${SYS_OS}-${ARCH}/bin/xmake"
+
+cd "$ROOT"
+
+# Parse args: before -- is watch flags, after -- is target + args
+WATCH_ARGS=""
+RUN_TARGET=""
+RUN_ARGS=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --)
+            shift
+            RUN_TARGET="$1"
+            shift
+            RUN_ARGS="$*"
+            break
+            ;;
+        *)
+            WATCH_ARGS="$WATCH_ARGS $1"
+            shift
+            ;;
+    esac
+done
+
+if [ -z "$RUN_TARGET" ]; then
+    echo "Usage: xmake/watch -d <dir> -- <target> [args...]" >&2
+    exit 1
+fi
+
+# Resolve the binary path via xmake target metadata (strip ANSI codes)
+BIN=$("$XMAKE" show -t "$RUN_TARGET" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep targetfile | awk '{print $NF}')
+if [ -z "$BIN" ] || [ ! -f "$BIN" ]; then
+    echo "[watch] warning: could not resolve binary for $RUN_TARGET, using xmake run" >&2
+    BIN=""
+fi
+
+SERVER_PID=""
+
+start_server() {
+    if [ -n "$BIN" ]; then
+        "$BIN" $RUN_ARGS &
+    else
+        "$XMAKE" run "$RUN_TARGET" $RUN_ARGS &
+    fi
+    SERVER_PID=$!
+    echo "[watch] server started (pid $SERVER_PID)"
+}
+
+stop_server() {
+    # Kill tracked PID
+    if [ -n "$SERVER_PID" ]; then
+        kill "$SERVER_PID" 2>/dev/null
+    fi
+    # Kill any other instances of the same binary (handles orphans)
+    if [ -n "$BIN" ]; then
+        pkill -f "$BIN" 2>/dev/null
+    fi
+    # Wait for all to exit
+    sleep 0.5
+    SERVER_PID=""
+}
+
+rebuild_and_restart() {
+    echo "[watch] rebuilding $RUN_TARGET..."
+    if "$XMAKE" build "$RUN_TARGET"; then
+        echo "[watch] restarting..."
+        stop_server
+        start_server
+    else
+        echo "[watch] build failed, keeping old server"
+    fi
+}
+
+cleanup() {
+    stop_server
+    [ -n "$WATCH_PID" ] && kill "$WATCH_PID" 2>/dev/null
+    exit 0
+}
+
+trap cleanup INT TERM
+
+# Initial launch
+start_server
+
+# Watch for changes — signal this process to rebuild
+"$XMAKE" watch $WATCH_ARGS -c "kill -USR1 $$" &
+WATCH_PID=$!
+
+trap rebuild_and_restart USR1
+
+while true; do
+    wait
+done

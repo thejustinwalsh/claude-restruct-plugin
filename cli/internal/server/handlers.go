@@ -149,6 +149,24 @@ func (s *Server) handleRefinementEvents(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, events)
 }
 
+// --- Stats endpoints (for charts) ---
+
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+
+	refinements, _ := s.db.GetRefinementStats(limit)
+	pipeline, _ := s.db.GetPipelineBreakdown(limit)
+	daily, _ := s.db.GetDailyCounts(30)
+	sessions, _ := s.db.GetSessionStats(50)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"refinements": refinements,
+		"pipeline":    pipeline,
+		"daily":       daily,
+		"sessions":    sessions,
+	})
+}
+
 // --- Stream endpoints (CLI → Server → SSE clients) ---
 
 func (s *Server) handleStreamStart(w http.ResponseWriter, r *http.Request) {

@@ -117,7 +117,7 @@ The local LLM's job has changed. It is NOT generating a "replacement prompt." It
 **Requirements:**
 - Default template ships embedded in the binary (current behavior via `embed`)
 - Users can override by placing a custom template at `~/.config/restruct/system_prompt.tmpl` or `.restruct/system_prompt.tmpl` in the project
-- Template uses Go `text/template` syntax with access to variables: `{{.RawPrompt}}`, `{{.Rules}}`, `{{.GitContext}}`, `{{.HasRules}}`, `{{.HasGitContext}}`
+- Template uses Go `text/template` syntax with access to variables: `.RawPrompt`, `.Rules`, `.GitContext`, `.HasRules`, `.HasGitContext`
 - `restruct config get system-prompt` prints the active template
 - Document template customization in the setup skill
 

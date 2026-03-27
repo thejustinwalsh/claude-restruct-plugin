@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -65,6 +67,8 @@ func New(database *db.DB, port string, devMode bool, webFS fs.FS) *Server {
 		r.Get("/refinements/{id}", s.handleGetRefinement)
 		r.Get("/refinements/{id}/events", s.handleRefinementEvents)
 
+		r.Get("/stats", s.handleStats)
+
 		r.Post("/stream/start", s.handleStreamStart)
 		r.Post("/stream/token", s.handleStreamToken)
 		r.Post("/stream/done", s.handleStreamDone)
@@ -81,8 +85,14 @@ func New(database *db.DB, port string, devMode bool, webFS fs.FS) *Server {
 
 // Start starts the HTTP server and the DB poller.
 func (s *Server) Start(ctx context.Context) error {
+	lc := net.ListenConfig{
+		Control: setReuseAddr,
+	}
+	ln, err := lc.Listen(ctx, "tcp", ":"+s.port)
+	if err != nil {
+		return err
+	}
 	s.srv = &http.Server{
-		Addr:    ":" + s.port,
 		Handler: s.router,
 	}
 
@@ -90,7 +100,7 @@ func (s *Server) Start(ctx context.Context) error {
 	go s.pollForUpdates(ctx)
 
 	slog.Info("server starting", "port", s.port, "url", fmt.Sprintf("http://localhost:%s", s.port))
-	return s.srv.ListenAndServe()
+	return s.srv.Serve(ln)
 }
 
 // Shutdown gracefully shuts down the server.
@@ -131,4 +141,12 @@ func (s *Server) pollForUpdates(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// setReuseAddr enables SO_REUSEADDR so the server can restart
+// immediately without waiting for TIME_WAIT to expire.
+func setReuseAddr(network, address string, conn syscall.RawConn) error {
+	return conn.Control(func(fd uintptr) {
+		syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+	})
 }

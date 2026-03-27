@@ -62,6 +62,13 @@ target("copy-web-dist")
         os.tryrm(path.join(os.projectdir(), "cli", "internal", "server", "dist"))
     end)
 
+-- Map xmake platform names to uname/Go names
+function _platform_suffix()
+    local host = os.host()
+    if host == "macosx" then host = "darwin" end
+    return host .. "-" .. os.arch()
+end
+
 ------------------------------------------------------------------------
 -- cli: build the Go binary for the host platform
 ------------------------------------------------------------------------
@@ -69,13 +76,14 @@ target("cli")
     set_kind("binary")
     add_deps("copy-web-dist")
     set_targetdir(path.join(os.projectdir(), "plugin", "bin"))
-    set_basename("restruct-" .. os.host() .. "-" .. os.arch())
+    set_basename("restruct-" .. _platform_suffix())
 
     on_build(function (target)
         import("phony", {inherit = true})
         import("go_build", {inherit = true})
 
-        local suffix = os.host() .. "-" .. os.arch()
+        local suffix = os.host() == "macosx" and "darwin" or os.host()
+        suffix = suffix .. "-" .. os.arch()
         on_changed("cli", "plugin/bin/restruct-" .. suffix,
             sources("cli/**/*.go",
                     "cli/internal/db/migrations/*.sql",
@@ -90,7 +98,8 @@ target("cli")
     end)
 
     on_clean(function ()
-        os.tryrm(path.join(os.projectdir(), "plugin", "bin", "restruct-" .. os.host() .. "-" .. os.arch()))
+        local host = os.host() == "macosx" and "darwin" or os.host()
+        os.tryrm(path.join(os.projectdir(), "plugin", "bin", "restruct-" .. host .. "-" .. os.arch()))
         os.cd(path.join(os.projectdir(), "cli"))
         os.execv("go", {"clean"})
     end)

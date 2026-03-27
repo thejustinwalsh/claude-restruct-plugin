@@ -347,6 +347,136 @@ type Metrics struct {
 	Passthroughs     int     `json:"passthroughs"`
 }
 
+// --- Stats (for charts) ---
+
+type RefinementStat struct {
+	ID         int64   `json:"id"`
+	CreatedAt  string  `json:"created_at"`
+	LatencyMs  int64   `json:"latency_ms"`
+	CacheHit   bool    `json:"cache_hit"`
+	Passthrough bool   `json:"passthrough"`
+	Model      string  `json:"model"`
+}
+
+type PipelineBreakdown struct {
+	RefinementID int64  `json:"refinement_id"`
+	CreatedAt    string `json:"created_at"`
+	Stage        string `json:"stage"`
+	DurationMs   int64  `json:"duration_ms"`
+}
+
+type DailyCount struct {
+	Date  string `json:"date"`
+	Count int    `json:"count"`
+}
+
+type SessionStat struct {
+	ID              string  `json:"id"`
+	DurationMinutes float64 `json:"duration_minutes"`
+	Refinements     int     `json:"refinements"`
+}
+
+func (d *DB) GetRefinementStats(limit int) ([]RefinementStat, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := d.pool.Query(`
+		SELECT id, created_at, latency_ms, cache_hit, passthrough, model
+		FROM refinements WHERE status = 'complete'
+		ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var stats []RefinementStat
+	for rows.Next() {
+		var s RefinementStat
+		if err := rows.Scan(&s.ID, &s.CreatedAt, &s.LatencyMs, &s.CacheHit, &s.Passthrough, &s.Model); err != nil {
+			return nil, err
+		}
+		stats = append(stats, s)
+	}
+	return stats, rows.Err()
+}
+
+func (d *DB) GetPipelineBreakdown(limit int) ([]PipelineBreakdown, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := d.pool.Query(`
+		SELECT pe.refinement_id, r.created_at, pe.stage, pe.duration_ms
+		FROM pipeline_events pe
+		JOIN refinements r ON r.id = pe.refinement_id
+		WHERE r.status = 'complete'
+		ORDER BY r.created_at DESC, pe.id ASC
+		LIMIT ?`, limit*10)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var breakdown []PipelineBreakdown
+	for rows.Next() {
+		var b PipelineBreakdown
+		if err := rows.Scan(&b.RefinementID, &b.CreatedAt, &b.Stage, &b.DurationMs); err != nil {
+			return nil, err
+		}
+		breakdown = append(breakdown, b)
+	}
+	return breakdown, rows.Err()
+}
+
+func (d *DB) GetDailyCounts(days int) ([]DailyCount, error) {
+	if days <= 0 {
+		days = 30
+	}
+	rows, err := d.pool.Query(`
+		SELECT DATE(created_at) as date, COUNT(*) as count
+		FROM refinements WHERE status = 'complete'
+		GROUP BY DATE(created_at)
+		ORDER BY date DESC LIMIT ?`, days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var counts []DailyCount
+	for rows.Next() {
+		var c DailyCount
+		if err := rows.Scan(&c.Date, &c.Count); err != nil {
+			return nil, err
+		}
+		counts = append(counts, c)
+	}
+	return counts, rows.Err()
+}
+
+func (d *DB) GetSessionStats(limit int) ([]SessionStat, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := d.pool.Query(`
+		SELECT s.id,
+			COALESCE((JULIANDAY(s.ended_at) - JULIANDAY(s.started_at)) * 24 * 60, 0) as duration_minutes,
+			COUNT(r.id) as refinements
+		FROM sessions s
+		LEFT JOIN refinements r ON r.session_id = s.id AND r.status = 'complete'
+		WHERE s.ended_at IS NOT NULL
+		GROUP BY s.id
+		ORDER BY s.started_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var stats []SessionStat
+	for rows.Next() {
+		var s SessionStat
+		if err := rows.Scan(&s.ID, &s.DurationMinutes, &s.Refinements); err != nil {
+			return nil, err
+		}
+		stats = append(stats, s)
+	}
+	return stats, rows.Err()
+}
+
 func (d *DB) GetMetrics() (*Metrics, error) {
 	m := &Metrics{}
 	d.pool.QueryRow("SELECT COUNT(*) FROM sessions").Scan(&m.TotalSessions)

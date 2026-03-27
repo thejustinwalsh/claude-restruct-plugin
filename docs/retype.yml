@@ -1,5 +1,6 @@
 input: .
 output: .retype
+url: http://localhost:5001
 
 branding:
   title: Restruct

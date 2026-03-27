@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -16,9 +18,11 @@ import (
 )
 
 var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Start the restruct dashboard server",
-	Long:  `Starts the web dashboard for monitoring refinements, sessions, and pipeline telemetry.`,
+	Use:           "serve",
+	Short:         "Start the restruct dashboard server",
+	Long:          `Starts the web dashboard for monitoring refinements, sessions, and pipeline telemetry.`,
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		port, _ := cmd.Flags().GetString("port")
 		dev := server.IsDevMode()
@@ -68,7 +72,11 @@ var serveCmd = &cobra.Command{
 			slog.Info("dev mode: CORS enabled for localhost:5173")
 		}
 
-		return srv.Start(ctx)
+		err = srv.Start(ctx)
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
 	},
 }
 
