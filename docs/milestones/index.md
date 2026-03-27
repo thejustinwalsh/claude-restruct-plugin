@@ -18,14 +18,14 @@ order: 800
 |---|-----------|--------|------------|---------|
 | M1 | [Hook Protocol & Claude Code Integration](M1-HOOK-PROTOCOL.md) | **Done** | — | Verify and fix the hook contract; document session_id, transcript_path, and hook I/O schema |
 | M2 | [Core Pipeline Hardening](M2-CORE-PIPELINE.md) | **Done** | M1 | Production-ready pipeline: error handling, timeouts, streaming Ollama, graceful degradation |
-| M3 | [Prompt Engineering & Output Format](M3-PROMPT-ENGINE.md) | **~40% Done** | M2 | Prompt builder + system template implemented. Needs injection framing, passthrough detection, optimization |
-| M4 | [Server & Dashboard](M4-SERVER-DASHBOARD.md) | **~90% Done** | M1, M2 | Chi server, React SPA, SQLite data layer, SSE hub, daemon management all implemented |
+| M3 | [Prompt Engineering & Output Format](M3-PROMPT-ENGINE.md) | **Done** | M2 | System prompt v2 (supplementary context, RE2 restatement, no persona), passthrough detection, injection framing, token budget, versioned prompts, configurable template |
+| M4 | [Server & Dashboard](M4-SERVER-DASHBOARD.md) | **Done** | M1, M2 | Chi server, React SPA, SQLite data layer, SSE hub, daemon management, streaming pipeline all implemented |
 | M5 | [Rules Engine & Context Gathering](M5-RULES-ENGINE.md) | **~30% Done** | M2 | Rules loader with hierarchical search implemented. Needs LLM filtering, git context, conversation-aware |
 | M6 | [Caching & Performance](M6-CACHE-PERF.md) | **~30% Done** | M2, M4 | File-based cache with SHA256 keys implemented. Needs SQLite migration, TTL, LRU eviction |
 | M7 | [CLI UX & Configuration](M7-CLI-UX.md) | **~70% Done** | M2 | Doctor, model, config commands implemented. Needs auto-fix, error polish, completions, version check |
 | M8 | [Plugin Distribution & Installation](M8-PLUGIN-DIST.md) | **~60% Done** | M1, M7 | Plugin manifest, skills, cross-platform builds done. Needs install flow, uninstall, release automation |
 | M8.1 | [Build System (Make → xmake)](M8.1-BUILD-SYSTEM.md) | **Done** | — | xmake + pnpm workspaces, incremental builds, cross-compilation, debug/release modes |
-| M9 | [Testing & Calibration](M9-TESTING.md) | **~10% Done** | M3, M4 | 26 tests across 5 files (M1, M2). Needs coverage expansion, integration tests, eval framework |
+| M9 | [Testing & Calibration](M9-TESTING.md) | **~40% Done** | M3, M4 | 96 tests across 9 packages (M1, M2, M3, M4 covered). Needs integration tests, eval framework, >80% coverage |
 | M10 | [Self-Improvement Loop](M10-SELF-IMPROVE.md) | Not Started | M4, M9 | Dashboard-driven feedback loop: rating analysis, system prompt refinement, rules suggestions |
 
 ---
@@ -63,18 +63,18 @@ order: 800
 
 **Verified end-to-end:** "fix the auth bug where tokens expire too fast" → 22.8s inference → 210-word structured output with objective, constraints, workflow, uncertainty protocol, anti-patterns. Injected as hidden additionalContext.
 
-### M3: Prompt Engineering & Output Format (~40% Done)
+### M3: Prompt Engineering & Output Format (Done)
 
 | Task | Status | Notes |
 |------|--------|-------|
-| 3.1 — Injection framing | ❌ | Design the bridge text between user prompt and structured additionalContext |
-| 3.2 — System prompt optimization | ✅ Done | `system_prompt.tmpl` embedded, instructs model to output `<structured_prompt>` block |
-| 3.3 — Context builder optimization | ✅ Done | `prompt/builder.go` — assembles system + user message with Developer's Request, Project Rules, Repository State |
-| 3.4 — Prompt template as configurable asset | ❌ | User-overridable `system_prompt.tmpl` |
-| 3.5 — Passthrough detection | ❌ | Skip injection on follow-ups ("y", "try option 2"), commands |
-| 3.6 — Refinement quality smoke tests | ❌ | 10+ test cases verifying injection format |
+| 3.1 — Injection framing | ✅ Done | `prompt/framing.go` — one-line preamble + `<context_supplement>` block. Handles `NO_ADDITIONAL_CONTEXT` sentinel |
+| 3.2 — System prompt optimization | ✅ Done | v2 rewrite: no persona, supplementary context model, RE2 intent restatement, workflow section, few-shot examples. Versioned at `versions/v2_supplement.tmpl` |
+| 3.3 — Context builder optimization | ✅ Done | `prompt/builder.go` — conditional sections (omit empty), token budget with truncation priority (git → rules → never prompt) |
+| 3.4 — Prompt template as configurable asset | ✅ Done | Search path: `.restruct/system_prompt.tmpl` → `~/.config/restruct/system_prompt.tmpl` → embedded default. Version history in `versions/` |
+| 3.5 — Passthrough detection | ✅ Done | `pipeline/passthrough.go` — heuristic detection: affirmatives, follow-ups, numbered selections, slash commands. 64 test cases |
+| 3.6 — Refinement quality smoke tests | ✅ Done | 32 tests across pipeline + prompt packages (passthrough, framing, builder, template, validation, NoContext sentinel) |
 
-### M4: Server & Dashboard (~90% Done)
+### M4: Server & Dashboard (Done)
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -84,7 +84,7 @@ order: 800
 | 4.4 — React SPA (Vite) | ✅ Done | Dashboard, Sessions, SessionDetail, RefinementDetail pages. API client, SSE hook, ShadcN components, Tailwind |
 | 4.5 — Dev server flow | ✅ Done | Build tags: debug → CORS + nil FS (Vite proxy), release → embedded SPA. `pnpm dev` runs both |
 | 4.6 — Daemon management | ✅ Done | `restruct serve --daemon`, PID file, `serve stop`, `serve status`. Setsid for background process |
-| 4.7 — Streaming Ollama integration | ⚠️ Partial | `ChatStream()` available in Ollama client. Not yet wired to SSE hub for live dashboard view |
+| 4.7 — Streaming Ollama integration | ✅ Done | `ChatStream()` → `HttpTokenSink` → POST to server → SSE hub → browser `useStreamingTokens` hook → `StreamingCard`. Full chain wired |
 | 4.8 — SSE live updates (DB polling) | ✅ Done | `sse/hub.go`: pub-sub pattern, 1s DB poll, `refinement:new` broadcasts to all connected clients |
 
 ### M5: Rules Engine & Context Gathering (~30% Done)
@@ -131,11 +131,11 @@ order: 800
 | 8.5 — Uninstall & cleanup | ❌ | `restruct uninstall` |
 | 8.6 — Plugin release automation | ❌ | Changelog, version bumping, CI commits binaries |
 
-### M9: Testing & Calibration (~10% Done)
+### M9: Testing & Calibration (~40% Done)
 
 | Task | Status | Notes |
 |------|--------|-------|
-| 9.1 — Unit test coverage | ⚠️ Partial | 26 tests across 5 files: protocol (7), install (3), session (4), pipeline (12), cache. Needs >80% across all packages |
+| 9.1 — Unit test coverage | ⚠️ Partial | 96 tests across 9 packages: pipeline (14 + 64 passthrough), prompt (20), db (22), server (18), sse (6), sink (8), protocol (7), install (3), session (4), cache (2). Needs >80% across all packages |
 | 9.2 — Integration test suite | ❌ | Mock Ollama server, end-to-end binary tests |
 | 9.3 — Prompt quality evaluation framework | ❌ | `restruct eval` command, structural + LLM-as-judge |
 | 9.4 — Evaluation corpus creation | ❌ | 30+ test prompts with quality criteria |
@@ -180,10 +180,17 @@ These were previously open and have been resolved during implementation:
 
 ## Open Decisions (Remaining)
 
-- **M3:** Exact injection framing text — how to bridge user prompt → structured context. Current system prompt produces XML (`<structured_prompt>`) which tested well end-to-end but hasn't been compared against markdown
-- **M3:** Whether system prompt needs full rewrite for injection model or just framing adjustments. Current prompt says "output goes directly to the agent" which is technically wrong (it goes as additionalContext)
 - **M5:** Transcript parsing depth for conversation-aware refinement
 - **M10:** How to safely auto-suggest system prompt changes
+
+## Recently Resolved
+
+| Decision | Resolution | Resolved In |
+|----------|-----------|-------------|
+| Injection framing text | One-line preamble: `[Project rules analysis for the request above. Follow these constraints during implementation.]` + `<context_supplement>` XML block | M3 implementation |
+| System prompt rewrite | Full rewrite to supplementary-context model. No persona, professional tone, RE2 intent restatement, scaled depth with `NO_ADDITIONAL_CONTEXT` sentinel. Versioned at `versions/v2_supplement.tmpl` | M3 implementation |
+| Workflow section | Retained. ReAct research supports it (+34% on ALFWorld). Recency bias requires re-injection to counteract drift. Kept concise: 4-step Investigate → Plan → Implement → Verify | M3 implementation |
+| RE2 re-reading | Applied. Local LLM generates `<intent>` section restating request in precise terms. Claude reads casual prompt (pass 1), then precise restatement alongside rules (pass 2). Xu et al. EMNLP 2024: +2-5 pts across reasoning benchmarks | M3 implementation |
 
 ---
 
@@ -193,8 +200,8 @@ These were previously open and have been resolved during implementation:
 M1  (Hook Protocol)        ██████████  Done
  │
  ├── M2  (Core Pipeline)   ██████████  Done
- │    ├── M3  (Prompt Engine)    ████░░░░░░  ~40%
- │    ├── M4  (Server)           █████████░  ~90%
+ │    ├── M3  (Prompt Engine)    ██████████  Done
+ │    ├── M4  (Server)           ██████████  Done
  │    ├── M5  (Rules Engine)     ███░░░░░░░  ~30%
  │    ├── M6  (Cache & Perf)     ███░░░░░░░  ~30%
  │    └── M7  (CLI UX)           ███████░░░  ~70%
@@ -203,7 +210,7 @@ M1  (Hook Protocol)        ██████████  Done
  │
  └── M8.1 (Build System)   ██████████  Done
 
- M3 + M4 ──► M9  (Testing)      █░░░░░░░░░  ~10%
+ M3 + M4 ──► M9  (Testing)      ████░░░░░░  ~40%
               └──► M10 (Self-Improve)  ░░░░░░░░░░
 ```
 

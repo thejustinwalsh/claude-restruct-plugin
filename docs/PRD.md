@@ -181,7 +181,7 @@ Ollama provides a local OpenAI-compatible API on `localhost:11434`, making integ
                            │
                            ▼
 ┌──────────────────────────────────────────────────────────┐
-│              META-PROMPT HOOK (UserPromptSubmit)          │
+│              META-PROMPT HOOK (UserPromptSubmit)         │
 │                                                          │
 │  1. Intercept raw user prompt                            │
 │  2. Load agents.md + repo context                        │
@@ -190,7 +190,7 @@ Ollama provides a local OpenAI-compatible API on `localhost:11434`, making integ
 │  5. Inject as additionalContext                          │
 │                                                          │
 │  ┌──────────────────────────────────────────────────┐    │
-│  │         LOCAL LLM (Qwen 2.5 Coder 14B)          │    │
+│  │         LOCAL LLM (Qwen 2.5 Coder 14B)           │    │
 │  │                                                  │    │
 │  │  System Prompt:                                  │    │
 │  │  "You are a prompt architect. Given a            │    │

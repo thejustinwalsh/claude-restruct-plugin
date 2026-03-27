@@ -9,7 +9,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct refine",
-            "timeout": 15
+            "timeout": 120
           }
         ]
       }

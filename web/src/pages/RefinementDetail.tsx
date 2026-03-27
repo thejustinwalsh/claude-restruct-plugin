@@ -4,6 +4,7 @@ import type { PipelineEvent } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { XmlHighlight } from '@/components/XmlHighlight';
 
 function PipelineTimeline({ events }: { events: PipelineEvent[] }) {
   const maxDuration = Math.max(...events.map((e) => e.duration_ms), 1);
@@ -50,8 +51,8 @@ function PromptDiff({ raw, refined }: { raw: string; refined: string | null }) {
           Refined (additionalContext)
         </h3>
         {refined ? (
-          <pre className="bg-muted max-h-[600px] overflow-auto rounded-lg p-4 text-sm break-words whitespace-pre-wrap">
-            {refined}
+          <pre className="bg-muted max-h-[600px] overflow-auto rounded-lg p-4 font-mono text-sm break-words whitespace-pre-wrap">
+            <XmlHighlight code={refined} />
           </pre>
         ) : (
           <p className="text-muted-foreground p-4 text-sm italic">

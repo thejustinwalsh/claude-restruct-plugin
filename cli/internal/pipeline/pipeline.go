@@ -50,9 +50,14 @@ type TimingResult struct {
 type RefineResult struct {
 	Refined   string
 	CacheHit  bool
+	NoContext bool // LLM determined no additional context needed
 	Timings   []TimingResult
 	TotalTime time.Duration
 }
+
+// NoContextSentinel is the literal string the local LLM outputs when
+// the request is clear and no project rules apply.
+const NoContextSentinel = "NO_ADDITIONAL_CONTEXT"
 
 // Pipeline orchestrates the prompt refinement process.
 type Pipeline struct {
@@ -82,7 +87,7 @@ func New(cfg *config.Config) (*Pipeline, error) {
 		llm:     client,
 		rules:   rules.NewLoader(cwd, cfg.Rules.Files),
 		git:     git.NewContextProvider(cwd),
-		builder: prompt.NewBuilder(),
+		builder: prompt.NewBuilder(cfg.Refinement.MaxTokens),
 		cache:   cache.NewStore(cfg.Cache.Dir, cfg.Cache.Enabled),
 		cfg:     cfg,
 	}, nil
@@ -94,7 +99,7 @@ func NewWithDeps(llm LLMClient, rl RulesLoader, gp GitProvider, cs CacheStore, c
 		llm:     llm,
 		rules:   rl,
 		git:     gp,
-		builder: prompt.NewBuilder(),
+		builder: prompt.NewBuilder(cfg.Refinement.MaxTokens),
 		cache:   cs,
 		cfg:     cfg,
 	}
@@ -203,7 +208,16 @@ func (p *Pipeline) Refine(ctx context.Context, rawPrompt string, sink ollama.Tok
 		return nil, fmt.Errorf("ollama inference: %w", llmErr)
 	}
 
-	// 8. Validate output
+	// 8. Check for no-context sentinel
+	if strings.TrimSpace(refined) == NoContextSentinel {
+		result.NoContext = true
+		result.Refined = ""
+		result.TotalTime = time.Since(start)
+		slog.Info("LLM determined no additional context needed")
+		return result, nil
+	}
+
+	// 9. Validate output
 	timer("validation", func() {
 		if err := validateOutput(refined, rawPrompt); err != nil {
 			slog.Warn("output validation failed, discarding", "error", err)
@@ -245,9 +259,9 @@ func validateOutput(refined, rawPrompt string) error {
 	}
 	// Check for system prompt leakage
 	leakMarkers := []string{
-		"You are a Prompt Architect",
-		"## Your Operating Principles",
-		"Chain of Thought (mandatory internal process)",
+		"You generate supplementary execution context",
+		"## What to produce",
+		"output is appended AFTER the developer",
 	}
 	for _, marker := range leakMarkers {
 		if strings.Contains(refined, marker) {

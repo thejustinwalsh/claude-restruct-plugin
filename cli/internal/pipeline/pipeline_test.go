@@ -181,7 +181,7 @@ func TestRefine_OutputShorterThanInput(t *testing.T) {
 func TestRefine_SystemPromptLeak(t *testing.T) {
 	llm := &mockLLM{
 		available:    true,
-		chatResponse: "You are a Prompt Architect that helps transform prompts into structured format with proper objectives and constraints",
+		chatResponse: "You generate supplementary execution context for an AI coding assistant that produces structured output with proper objectives and constraints",
 	}
 	p := NewWithDeps(llm, &mockRules{}, &mockGit{ctx: &git.Context{}}, newMockCache(), defaultCfg())
 	_, err := p.Refine(context.Background(), "fix the auth bug", nil)
@@ -286,7 +286,8 @@ func TestValidateOutput(t *testing.T) {
 		{"empty", "", "fix bug", true},
 		{"whitespace only", "   \n  ", "fix bug", true},
 		{"shorter than input", "ok", "fix the authentication bug in the module", true},
-		{"system prompt leak", "You are a Prompt Architect and you should...", "fix", true},
+		{"system prompt leak", "You generate supplementary execution context for coding agents and you should...", "fix", true},
+		{"valid new format", "<context_supplement><intent>Fix the bug</intent></context_supplement>", "fix bug", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -295,5 +296,23 @@ func TestValidateOutput(t *testing.T) {
 				t.Errorf("validateOutput() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestRefine_NoContextSentinel(t *testing.T) {
+	llm := &mockLLM{
+		available:    true,
+		chatResponse: "NO_ADDITIONAL_CONTEXT",
+	}
+	p := NewWithDeps(llm, &mockRules{}, &mockGit{ctx: &git.Context{}}, newMockCache(), defaultCfg())
+	result, err := p.Refine(context.Background(), "add a README", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.NoContext {
+		t.Error("expected NoContext=true for NO_ADDITIONAL_CONTEXT sentinel")
+	}
+	if result.Refined != "" {
+		t.Errorf("expected empty Refined, got %q", result.Refined)
 	}
 }

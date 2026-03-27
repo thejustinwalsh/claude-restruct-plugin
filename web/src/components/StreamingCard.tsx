@@ -33,12 +33,12 @@ export function StreamingCard({ stream, lastRefinement }: Props) {
                     <span className="bg-primary absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" />
                     <span className="bg-primary relative inline-flex h-2.5 w-2.5 rounded-full" />
                   </span>
-                  Refining...
+                  Current Refinement
                 </>
               ) : stream.error ? (
                 'Error'
               ) : (
-                'Complete'
+                'Last Refinement'
               )}
             </CardTitle>
             <Badge variant="secondary">{stream.model}</Badge>
@@ -57,8 +57,7 @@ export function StreamingCard({ stream, lastRefinement }: Props) {
             >
               <XmlHighlight
                 code={
-                  stream.text ||
-                  (stream.isStreaming ? 'Waiting for tokens...' : '')
+                  stream.text || (stream.isStreaming ? 'Processing...' : '')
                 }
               />
               {stream.isStreaming && <span className="animate-pulse">▌</span>}

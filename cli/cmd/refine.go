@@ -12,6 +12,7 @@ import (
 	"github.com/tjw/restruct/internal/db"
 	"github.com/tjw/restruct/internal/hook"
 	"github.com/tjw/restruct/internal/pipeline"
+	"github.com/tjw/restruct/internal/prompt"
 	"github.com/tjw/restruct/internal/session"
 	"github.com/tjw/restruct/internal/sink"
 )
@@ -72,8 +73,11 @@ are appended as additional context that guides Claude's behavior.`,
 			}
 		}
 
-		// Pass through short prompts or when bypassed
-		if bypass || len(strings.Fields(input.Prompt)) < cfg.Refinement.MinWords {
+		// Pass through short prompts, follow-ups, commands, or when bypassed
+		shouldSkip := bypass ||
+			len(strings.Fields(input.Prompt)) < cfg.Refinement.MinWords ||
+			!pipeline.ShouldRefine(input.Prompt)
+		if shouldSkip {
 			slog.Debug("passthrough", "bypass", bypass, "words", len(strings.Fields(input.Prompt)))
 			if recorder != nil {
 				valid := true
@@ -166,7 +170,12 @@ are appended as additional context that guides Claude's behavior.`,
 			return hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
 		}
 
-		return hook.WriteOutput(os.Stdout, hook.ContextOutput(result.Refined))
+		// Frame the output for Claude or passthrough if no context needed
+		framed := prompt.FrameContext(result.Refined)
+		if framed == "" || result.NoContext {
+			return hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
+		}
+		return hook.WriteOutput(os.Stdout, hook.ContextOutput(framed))
 	},
 }
 
