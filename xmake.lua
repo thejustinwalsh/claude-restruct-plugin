@@ -69,27 +69,28 @@ target("cli")
     set_kind("binary")
     add_deps("copy-web-dist")
     set_targetdir(path.join(os.projectdir(), "plugin", "bin"))
-    set_basename("restruct")
+    set_basename("restruct-" .. os.host() .. "-" .. os.arch())
 
     on_build(function (target)
         import("phony", {inherit = true})
         import("go_build", {inherit = true})
 
-        on_changed("cli", "plugin/bin/restruct",
+        local suffix = os.host() .. "-" .. os.arch()
+        on_changed("cli", "plugin/bin/restruct-" .. suffix,
             sources("cli/**/*.go",
                     "cli/internal/db/migrations/*.sql",
                     "cli/internal/server/dist/**",
                     "cli/internal/prompt/system_prompt.tmpl",
                     "cli/go.mod", "cli/go.sum"),
             function ()
-                go("plugin/bin/restruct", {
+                go("plugin/bin/restruct-" .. suffix, {
                     tags = is_mode("debug") and "debug" or nil,
                 })
             end)
     end)
 
     on_clean(function ()
-        os.tryrm(path.join(os.projectdir(), "plugin", "bin", "restruct"))
+        os.tryrm(path.join(os.projectdir(), "plugin", "bin", "restruct-" .. os.host() .. "-" .. os.arch()))
         os.cd(path.join(os.projectdir(), "cli"))
         os.execv("go", {"clean"})
     end)
