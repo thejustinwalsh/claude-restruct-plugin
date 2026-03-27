@@ -6,9 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
-// Install adds restruct as a UserPrompt hook in .claude/settings.json.
+// Install adds restruct as a UserPromptSubmit hook in .claude/settings.json
+// and optionally adds SessionStart/SessionEnd hooks for session tracking.
 func Install(projectDir string, global bool) error {
 	var settingsPath string
 	if global {
@@ -41,9 +43,11 @@ func Install(projectDir string, global bool) error {
 		return fmt.Errorf("resolve binary: %w", err)
 	}
 
-	// Build the hook entry
-	hookEntry := map[string]any{
-		"matcher": ".*",
+	// Build hook entries per Claude Code's hook contract:
+	// - UserPromptSubmit: no matcher support (use empty string)
+	// - type: "command" is the only supported type for UserPromptSubmit
+	userPromptHook := map[string]any{
+		"matcher": "",
 		"hooks": []any{
 			map[string]any{
 				"type":    "command",
@@ -52,12 +56,34 @@ func Install(projectDir string, global bool) error {
 		},
 	}
 
-	// Merge into settings
+	sessionStartHook := map[string]any{
+		"matcher": "",
+		"hooks": []any{
+			map[string]any{
+				"type":    "command",
+				"command": binaryPath + " session start",
+			},
+		},
+	}
+
+	sessionEndHook := map[string]any{
+		"matcher": "",
+		"hooks": []any{
+			map[string]any{
+				"type":    "command",
+				"command": binaryPath + " session end",
+			},
+		},
+	}
+
+	// Merge into settings, preserving existing non-restruct hooks
 	hooks, ok := settings["hooks"].(map[string]any)
 	if !ok {
 		hooks = make(map[string]any)
 	}
-	hooks["UserPrompt"] = []any{hookEntry}
+	hooks["UserPromptSubmit"] = []any{userPromptHook}
+	hooks["SessionStart"] = []any{sessionStartHook}
+	hooks["SessionEnd"] = []any{sessionEndHook}
 	settings["hooks"] = hooks
 
 	// Write back
@@ -70,7 +96,47 @@ func Install(projectDir string, global bool) error {
 		return fmt.Errorf("write settings: %w", err)
 	}
 
+	// Add .restruct/ to .gitignore if installing at project level
+	if !global {
+		if err := ensureGitignore(projectDir); err != nil {
+			fmt.Fprintf(os.Stderr, "restruct: warning: could not update .gitignore: %v\n", err)
+		}
+	}
+
 	return nil
+}
+
+// ensureGitignore adds .restruct/ to the project's .gitignore if not already present.
+func ensureGitignore(projectDir string) error {
+	gitignorePath := filepath.Join(projectDir, ".gitignore")
+
+	content, err := os.ReadFile(gitignorePath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	entry := ".restruct/"
+	// Check if already present
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.TrimSpace(line) == entry {
+			return nil // already there
+		}
+	}
+
+	// Append
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Add newline before entry if file doesn't end with one
+	prefix := ""
+	if len(content) > 0 && content[len(content)-1] != '\n' {
+		prefix = "\n"
+	}
+	_, err = f.WriteString(prefix + entry + "\n")
+	return err
 }
 
 func resolveRestructBinary() (string, error) {

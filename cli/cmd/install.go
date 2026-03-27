@@ -10,7 +10,9 @@ import (
 var installCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install restruct as a Claude Code hook",
-	Long:  `Adds the restruct refine command as a UserPrompt hook in .claude/settings.json.`,
+	Long: `Adds restruct as a UserPromptSubmit hook in .claude/settings.json.
+Also installs SessionStart and SessionEnd hooks for session tracking,
+and adds .restruct/ to .gitignore.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		projectDir, _ := cmd.Flags().GetString("project-dir")
 		global, _ := cmd.Flags().GetBool("global")
@@ -19,7 +21,16 @@ var installCmd = &cobra.Command{
 			return fmt.Errorf("install failed: %w", err)
 		}
 
-		fmt.Println("Hook installed successfully.")
+		if global {
+			fmt.Println("Hooks installed globally in ~/.claude/settings.json")
+		} else {
+			fmt.Println("Hooks installed in .claude/settings.json")
+			fmt.Println("Added .restruct/ to .gitignore")
+		}
+		fmt.Println("\nInstalled hooks:")
+		fmt.Println("  UserPromptSubmit → restruct refine")
+		fmt.Println("  SessionStart     → restruct session start")
+		fmt.Println("  SessionEnd       → restruct session end")
 		return nil
 	},
 }

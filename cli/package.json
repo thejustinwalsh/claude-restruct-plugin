@@ -1,0 +1,11 @@
+{
+  "name": "@restruct/cli",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "xmake build cli",
+    "dev": "xmake watch -d cli -r -- serve --port 8377 --verbose",
+    "test": "go test ./...",
+    "lint": "golangci-lint run"
+  }
+}

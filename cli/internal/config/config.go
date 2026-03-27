@@ -16,11 +16,16 @@ type Config struct {
 }
 
 type OllamaConfig struct {
-	URL        string        `mapstructure:"url"`
-	Model      string        `mapstructure:"model"`
-	Timeout    time.Duration `mapstructure:"timeout"`
-	KeepAlive  time.Duration `mapstructure:"keep_alive"`
-	MinVersion string        `mapstructure:"min_version"`
+	URL            string        `mapstructure:"url"`
+	Model          string        `mapstructure:"model"`
+	ConnectTimeout time.Duration `mapstructure:"connect_timeout"` // fast: is Ollama reachable?
+	RequestTimeout time.Duration `mapstructure:"request_timeout"` // generous: total LLM response time
+	StallTimeout   time.Duration `mapstructure:"stall_timeout"`   // no tokens for this long = abort
+	KeepAlive      time.Duration `mapstructure:"keep_alive"`
+	MinVersion     string        `mapstructure:"min_version"`
+
+	// Deprecated: use ConnectTimeout instead. Kept for backward compat with existing configs.
+	Timeout time.Duration `mapstructure:"timeout"`
 }
 
 type RefinementConfig struct {
@@ -42,11 +47,13 @@ func Defaults() *Config {
 	home, _ := os.UserHomeDir()
 	return &Config{
 		Ollama: OllamaConfig{
-			URL:        "http://localhost:11434",
-			Model:      "qwen2.5-coder:14b",
-			Timeout:    10 * time.Second,
-			KeepAlive:  60 * time.Minute,
-			MinVersion: "0.18.0",
+			URL:            "http://localhost:11434",
+			Model:          "qwen2.5-coder:14b",
+			ConnectTimeout: 5 * time.Second,
+			RequestTimeout: 120 * time.Second,
+			StallTimeout:   30 * time.Second,
+			KeepAlive:      60 * time.Minute,
+			MinVersion:     "0.18.0",
 		},
 		Refinement: RefinementConfig{
 			Temperature: 0.3,
@@ -69,7 +76,9 @@ func LoadFromViper() (*Config, error) {
 	// Set defaults in viper so they get picked up
 	viper.SetDefault("ollama.url", cfg.Ollama.URL)
 	viper.SetDefault("ollama.model", cfg.Ollama.Model)
-	viper.SetDefault("ollama.timeout", cfg.Ollama.Timeout)
+	viper.SetDefault("ollama.connect_timeout", cfg.Ollama.ConnectTimeout)
+	viper.SetDefault("ollama.request_timeout", cfg.Ollama.RequestTimeout)
+	viper.SetDefault("ollama.stall_timeout", cfg.Ollama.StallTimeout)
 	viper.SetDefault("ollama.keep_alive", cfg.Ollama.KeepAlive)
 	viper.SetDefault("ollama.min_version", cfg.Ollama.MinVersion)
 	viper.SetDefault("refinement.temperature", cfg.Refinement.Temperature)
@@ -82,5 +91,11 @@ func LoadFromViper() (*Config, error) {
 	if err := viper.Unmarshal(cfg); err != nil {
 		return nil, err
 	}
+
+	// Backward compat: if old "timeout" is set but new fields aren't, use it
+	if cfg.Ollama.Timeout > 0 && cfg.Ollama.ConnectTimeout == 5*time.Second {
+		cfg.Ollama.ConnectTimeout = cfg.Ollama.Timeout
+	}
+
 	return cfg, nil
 }

@@ -32,7 +32,7 @@ var modelPullCmd = &cobra.Command{
 			model = args[0]
 		}
 
-		client, err := ollama.NewClient(cfg.Ollama.URL, model, cfg.Ollama.Timeout, cfg.Ollama.KeepAlive)
+		client, err := ollama.NewClient(cfg.Ollama.URL, model, cfg.Ollama.ConnectTimeout, cfg.Ollama.RequestTimeout, cfg.Ollama.StallTimeout, cfg.Ollama.KeepAlive)
 		if err != nil {
 			return jsonError("client_init", err)
 		}
@@ -90,7 +90,7 @@ var modelLoadCmd = &cobra.Command{
 			keepAlive = ka
 		}
 
-		client, err := ollama.NewClient(cfg.Ollama.URL, model, 5*time.Minute, keepAlive)
+		client, err := ollama.NewClient(cfg.Ollama.URL, model, cfg.Ollama.ConnectTimeout, 5*time.Minute, cfg.Ollama.StallTimeout, keepAlive)
 		if err != nil {
 			return jsonError("client_init", err)
 		}
@@ -128,7 +128,7 @@ var modelStatusCmd = &cobra.Command{
 			cfg = config.Defaults()
 		}
 
-		client, err := ollama.NewClient(cfg.Ollama.URL, cfg.Ollama.Model, cfg.Ollama.Timeout, cfg.Ollama.KeepAlive)
+		client, err := ollama.NewClient(cfg.Ollama.URL, cfg.Ollama.Model, cfg.Ollama.ConnectTimeout, cfg.Ollama.RequestTimeout, cfg.Ollama.StallTimeout, cfg.Ollama.KeepAlive)
 		if err != nil {
 			return jsonError("client_init", err)
 		}

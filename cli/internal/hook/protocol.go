@@ -5,18 +5,31 @@ import (
 	"io"
 )
 
-// HookInput represents the JSON payload from Claude Code's hook system.
+// HookInput represents the JSON payload Claude Code sends to UserPromptSubmit hooks via stdin.
+// Reference: https://docs.anthropic.com/en/docs/claude-code/hooks
 type HookInput struct {
-	HookName  string `json:"hook_name"`
-	Prompt    string `json:"prompt"`
-	SessionID string `json:"session_id"`
+	SessionID      string `json:"session_id"`
+	TranscriptPath string `json:"transcript_path"`
+	Cwd            string `json:"cwd"`
+	PermissionMode string `json:"permission_mode"`
+	HookEventName  string `json:"hook_event_name"`
+	Prompt         string `json:"prompt"`
 }
 
-// HookOutput is the JSON response written back to Claude Code.
+// HookSpecificOutput contains fields specific to the UserPromptSubmit hook event.
+type HookSpecificOutput struct {
+	HookEventName     string `json:"hookEventName"`
+	AdditionalContext string `json:"additionalContext,omitempty"`
+	Decision          string `json:"decision,omitempty"`  // "block" to reject the prompt
+	Reason            string `json:"reason,omitempty"`    // shown to user when blocking
+	SuppressOutput    bool   `json:"suppressOutput,omitempty"`
+}
+
+// HookOutput is the JSON response written to stdout for Claude Code to consume.
+// For UserPromptSubmit, additionalContext is APPENDED to Claude's context
+// alongside the original prompt — it does not replace it.
 type HookOutput struct {
-	OK            bool   `json:"ok"`
-	RefinedPrompt string `json:"refined_prompt,omitempty"`
-	Error         string `json:"error,omitempty"`
+	HookSpecificOutput *HookSpecificOutput `json:"hookSpecificOutput,omitempty"`
 }
 
 // ParseInput reads and decodes the hook input from a reader (typically stdin).
@@ -29,21 +42,40 @@ func ParseInput(r io.Reader) (*HookInput, error) {
 }
 
 // WriteOutput encodes and writes the hook output to a writer (typically stdout).
+// If out is nil, writes nothing (clean passthrough).
 func WriteOutput(w io.Writer, out *HookOutput) error {
+	if out == nil {
+		return nil
+	}
 	return json.NewEncoder(w).Encode(out)
 }
 
-// OKOutput returns a passthrough response (no refinement).
-func OKOutput() *HookOutput {
-	return &HookOutput{OK: true}
+// PassthroughOutput returns nil — writing nothing to stdout with exit 0
+// means Claude Code proceeds with the original prompt unmodified.
+func PassthroughOutput() *HookOutput {
+	return nil
 }
 
-// RefinedOutput returns a response with the refined prompt replacing the original.
-func RefinedOutput(refined string) *HookOutput {
-	return &HookOutput{OK: true, RefinedPrompt: refined}
+// ContextOutput returns a response that appends additional context to Claude's
+// conversation alongside the user's original prompt.
+func ContextOutput(context string) *HookOutput {
+	return &HookOutput{
+		HookSpecificOutput: &HookSpecificOutput{
+			HookEventName:     "UserPromptSubmit",
+			AdditionalContext: context,
+			SuppressOutput:    true,
+		},
+	}
 }
 
-// ErrorOutput returns an error response.
-func ErrorOutput(msg string) *HookOutput {
-	return &HookOutput{OK: false, Error: msg}
+// BlockOutput returns a response that blocks the prompt from being processed.
+// The reason is shown to the user. The hook must exit with code 2 for this to work.
+func BlockOutput(reason string) *HookOutput {
+	return &HookOutput{
+		HookSpecificOutput: &HookSpecificOutput{
+			HookEventName: "UserPromptSubmit",
+			Decision:      "block",
+			Reason:        reason,
+		},
+	}
 }

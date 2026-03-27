@@ -55,7 +55,7 @@ var doctorCmd = &cobra.Command{
 
 		// Check server + version + model
 		ctx := context.Background()
-		client, err := ollama.NewClient(cfg.Ollama.URL, cfg.Ollama.Model, cfg.Ollama.Timeout, cfg.Ollama.KeepAlive)
+		client, err := ollama.NewClient(cfg.Ollama.URL, cfg.Ollama.Model, cfg.Ollama.ConnectTimeout, cfg.Ollama.RequestTimeout, cfg.Ollama.StallTimeout, cfg.Ollama.KeepAlive)
 		if err == nil && client.IsAvailable(ctx) {
 			report.OllamaRunning = true
 
