@@ -1,0 +1,6 @@
+cli/internal/server/dist/
+node_modules/
+.xmake/
+.restruct/
+.retype/
+.claude/settings.local.json

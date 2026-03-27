@@ -1,74 +1,59 @@
-Set up the restruct meta-prompt system. Run diagnostics, install dependencies, and warm the model.
+---
+description: Set up the restruct meta-prompt system. Runs diagnostics, installs Ollama, selects the right model for your hardware, and warms everything up.
+---
 
-## Important: Binary Path
+Execute ALL of the following steps immediately using the Bash tool. Do not describe what you're going to do — just do it. Run each command yourself, report results briefly, and move to the next step. Only pause if a command fails and you cannot fix it.
 
-The restruct binary is bundled inside this plugin. It is NOT on the user's PATH.
+## Step 1: Check if Ollama is installed
 
-Always invoke it using the absolute path via the plugin root:
+Run `which ollama` or `command -v ollama`.
 
-```
-${CLAUDE_PLUGIN_ROOT}/bin/restruct <command>
-```
-
-For example: `${CLAUDE_PLUGIN_ROOT}/bin/restruct doctor`
-
-All commands below use `restruct` as shorthand — always expand to the full path above when running them.
-
-## Steps
-
-### 1. Run diagnostics
-
-Run `${CLAUDE_PLUGIN_ROOT}/bin/restruct doctor` and read the JSON output. This tells you everything about the current state:
-- `ollama_installed` — whether the `ollama` binary is on PATH
-- `ollama_running` — whether the Ollama server is responding
-- `ollama_version` / `version_ok` — whether the installed version meets the minimum
-- `model_pulled` — whether the configured model is available locally
-- `all_good` — true if everything is ready
-
-If `all_good` is true, skip to step 5 (load model).
-
-### 2. Install Ollama (if `ollama_installed` is false)
-
-Tell the user to install Ollama:
-- **macOS**: `brew install ollama` or download from https://ollama.com/download
+If not found, install it:
+- **macOS**: `brew install ollama`
 - **Linux**: `curl -fsSL https://ollama.com/install.sh | sh`
 
-After install, the user needs to start the server: `ollama serve` (or it may auto-start).
+## Step 2: Start Ollama
 
-Then re-run `${CLAUDE_PLUGIN_ROOT}/bin/restruct doctor` to confirm.
+Check if Ollama is running: `curl -sf http://localhost:11434/api/version`
 
-### 3. Pull the model (if `model_pulled` is false)
+If not running:
+- **macOS**: `brew services start ollama`
+- **Linux**: start `ollama serve` in the background
 
-Run `${CLAUDE_PLUGIN_ROOT}/bin/restruct model pull`. This downloads the configured model.
+Wait 2 seconds, then confirm it responds.
 
-Progress is printed to stderr. The JSON result on stdout confirms success:
-```json
-{"ok": true, "model": "qwen2.5-coder:14b", "duration": "2m30s"}
+## Step 3: Check system memory and select model
+
+Run `sysctl -n hw.memsize` (macOS) or `grep MemTotal /proc/meminfo` (Linux) to get total system RAM.
+
+Select the model based on available memory:
+- **32GB+**: `qwen2.5-coder:14b` (best quality, ~9GB model, needs ~16GB for inference)
+- **16-31GB**: `qwen2.5-coder:7b` (good quality, ~4.5GB model, needs ~8GB for inference)
+- **8-15GB**: `qwen2.5-coder:3b` (acceptable quality, ~2GB model)
+- **<8GB**: Tell the user their system may not have enough memory for local LLM inference and suggest they check the restruct docs for alternatives.
+
+Report the detected RAM and your model choice to the user.
+
+## Step 4: Pull the model
+
+Run `ollama pull <selected-model>` directly. This downloads the model weights. It may take several minutes for larger models.
+
+## Step 5: Warm the model
+
+Run `ollama run <selected-model> "hello" --keepalive 60m` to load the model into GPU/RAM and keep it resident. This ensures the first real refinement is fast.
+
+## Step 6: Configure restruct to use the selected model
+
+Only needed if the model differs from the default (`qwen2.5-coder:14b`):
+
+```
+${CLAUDE_PLUGIN_ROOT}/bin/restruct config set ollama.model <selected-model>
 ```
 
-If the user has limited RAM (< 16GB), suggest they configure a smaller model:
-```
-${CLAUDE_PLUGIN_ROOT}/bin/restruct config set ollama.model qwen3:7b
-${CLAUDE_PLUGIN_ROOT}/bin/restruct model pull
-```
+## Step 7: Final verification
 
-### 4. Check model status
+Run `${CLAUDE_PLUGIN_ROOT}/bin/restruct doctor` to confirm everything is green.
 
-Run `${CLAUDE_PLUGIN_ROOT}/bin/restruct model status` to see all available models and confirm the configured one is present.
+If `all_good` is true, tell the user: **"Restruct is ready. Your prompts will be automatically refined via `<selected-model>`."**
 
-### 5. Load and warm the model
-
-Run `${CLAUDE_PLUGIN_ROOT}/bin/restruct model load` to preload the model into GPU/RAM with a 60-minute keep_alive.
-
-This ensures the first real refinement is fast (no cold-start delay).
-
-The JSON result confirms:
-```json
-{"ok": true, "model": "qwen2.5-coder:14b", "keep_alive": "1h0m0s", "duration": "3.2s"}
-```
-
-### 6. Confirm
-
-Run `${CLAUDE_PLUGIN_ROOT}/bin/restruct doctor` one final time. If `all_good` is true, tell the user they're ready. The hook will automatically refine prompts on every message.
-
-If they want to test it: `echo '{"prompt":"fix the auth bug"}' | ${CLAUDE_PLUGIN_ROOT}/bin/restruct refine --dry-run`
+If not, report what's still failing and attempt to fix it.

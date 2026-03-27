@@ -2,9 +2,45 @@
   "name": "restruct",
   "description": "Meta-prompt refinement via local LLM — transforms casual prompts into structured, rules-aware agent instructions",
   "version": "0.1.0",
-  "author": {
-    "name": "tjw"
-  },
-  "keywords": ["prompting", "meta-prompt", "ollama", "refinement", "structured-prompts"],
-  "license": "MIT"
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct refine",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct session start",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct model load",
+            "timeout": 30,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct session end",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
 }

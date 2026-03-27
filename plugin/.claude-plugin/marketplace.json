@@ -1,0 +1,18 @@
+{
+  "name": "thejustinwalsh",
+  "owner": {
+    "name": "Justin Walsh"
+  },
+  "metadata": {
+    "description": "Meta-prompt refinement via local LLM for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "restruct",
+      "source": "./",
+      "description": "Transforms casual prompts into structured, rules-aware agent instructions via a local LLM before Claude sees them.",
+      "category": "prompting",
+      "tags": ["prompting", "meta-prompt", "ollama", "refinement"]
+    }
+  ]
+}

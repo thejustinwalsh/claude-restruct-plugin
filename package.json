@@ -1,0 +1,14 @@
+{
+  "name": "claude-restruct-plugin",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "xmake f -m release && xmake build -g release",
+    "dev": "xmake f -m debug && xmake build cli && pnpm -r --parallel run dev",
+    "test": "pnpm -r run test",
+    "clean": "xmake clean"
+  },
+  "devDependencies": {
+    "xmake-build-system": "^3.0.0"
+  }
+}
