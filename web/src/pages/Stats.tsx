@@ -54,7 +54,7 @@ function LatencyChart({ data }: { data: RefinementStat[] }) {
         <CardTitle className="text-base">Latency Over Time</CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={latencyConfig} className="h-[250px] w-full">
+        <ChartContainer config={latencyConfig} className="h-[350px] w-full">
           <AreaChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis
@@ -123,31 +123,40 @@ function CacheChart({ data }: { data: RefinementStat[] }) {
         <CardTitle className="text-base">Cache Hit Rate</CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={cacheConfig} className="h-[250px] w-full">
-          <BarChart data={buckets}>
+        <ChartContainer config={cacheConfig} className="h-[350px] w-full">
+          <AreaChart data={buckets}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="label" tick={{ fontSize: 11 }} />
             <YAxis tick={{ fontSize: 11 }} />
             <ChartTooltip content={<ChartTooltipContent />} />
-            <Bar
+            <Area
               dataKey="hit"
               stackId="a"
+              type="monotone"
               fill="var(--color-hit)"
-              radius={[0, 0, 0, 0]}
+              fillOpacity={0.4}
+              stroke="var(--color-hit)"
+              strokeWidth={2}
             />
-            <Bar
+            <Area
               dataKey="miss"
               stackId="a"
+              type="monotone"
               fill="var(--color-miss)"
-              radius={[0, 0, 0, 0]}
+              fillOpacity={0.4}
+              stroke="var(--color-miss)"
+              strokeWidth={2}
             />
-            <Bar
+            <Area
               dataKey="passthrough"
               stackId="a"
+              type="monotone"
               fill="var(--color-passthrough)"
-              radius={[4, 4, 0, 0]}
+              fillOpacity={0.4}
+              stroke="var(--color-passthrough)"
+              strokeWidth={2}
             />
-          </BarChart>
+          </AreaChart>
         </ChartContainer>
       </CardContent>
     </Card>
@@ -212,7 +221,7 @@ function PipelineChart({ data }: { data: PipelineBreakdown[] }) {
         <CardTitle className="text-base">Pipeline Stage Breakdown</CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={config} className="h-[250px] w-full">
+        <ChartContainer config={config} className="h-[350px] w-full">
           <BarChart data={chartData.slice(-30)}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="time" tick={{ fontSize: 11 }} />
@@ -256,7 +265,7 @@ function DailyChart({ data }: { data: DailyCount[] }) {
         <CardTitle className="text-base">Refinements Per Day</CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={dailyConfig} className="h-[250px] w-full">
+        <ChartContainer config={dailyConfig} className="h-[350px] w-full">
           <BarChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="date" tick={{ fontSize: 11 }} />
@@ -298,7 +307,7 @@ function SessionScatterChart({ data }: { data: SessionStat[] }) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={scatterConfig} className="h-[250px] w-full">
+        <ChartContainer config={scatterConfig} className="h-[350px] w-full">
           <ScatterChart>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis
@@ -356,13 +365,10 @@ export function Stats() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Stats</h1>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <LatencyChart data={data.refinements ?? []} />
-        <CacheChart data={data.refinements ?? []} />
-        <PipelineChart data={data.pipeline ?? []} />
-        <DailyChart data={data.daily ?? []} />
-      </div>
-
+      <LatencyChart data={data.refinements ?? []} />
+      <CacheChart data={data.refinements ?? []} />
+      <PipelineChart data={data.pipeline ?? []} />
+      <DailyChart data={data.daily ?? []} />
       <SessionScatterChart data={data.sessions ?? []} />
     </div>
   );
