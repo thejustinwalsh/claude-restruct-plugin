@@ -97,7 +97,7 @@ func TestWriteOutput(t *testing.T) {
 		if decoded.HookSpecificOutput.AdditionalContext != "refined instructions here" {
 			t.Errorf("additionalContext = %q, want %q", decoded.HookSpecificOutput.AdditionalContext, "refined instructions here")
 		}
-		if !decoded.HookSpecificOutput.SuppressOutput {
+		if !decoded.SuppressOutput {
 			t.Error("suppressOutput should be true for context output")
 		}
 	})

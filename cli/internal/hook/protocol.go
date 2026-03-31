@@ -22,21 +22,32 @@ type HookInput struct {
 
 	// Stop hook fields
 	StopHookActive bool `json:"stop_hook_active,omitempty"`
+
+	// PreToolUse / PostToolUse fields
+	ToolName     string         `json:"tool_name,omitempty"`
+	ToolInput    map[string]any `json:"tool_input,omitempty"`
+	ToolUseID    string         `json:"tool_use_id,omitempty"`
+	ToolResponse string         `json:"tool_response,omitempty"` // PostToolUse only
 }
 
-// HookSpecificOutput contains fields specific to the UserPromptSubmit hook event.
+// HookSpecificOutput contains event-specific fields in the hook response.
+// Fields are a superset across hook events; unused fields are omitted.
 type HookSpecificOutput struct {
 	HookEventName     string `json:"hookEventName"`
 	AdditionalContext string `json:"additionalContext,omitempty"`
 	Decision          string `json:"decision,omitempty"`  // "block" to reject the prompt
 	Reason            string `json:"reason,omitempty"`    // shown to user when blocking
-	SuppressOutput    bool   `json:"suppressOutput,omitempty"`
+
+	// PreToolUse permission fields
+	PermissionDecision       string `json:"permissionDecision,omitempty"`       // "allow", "deny"
+	PermissionDecisionReason string `json:"permissionDecisionReason,omitempty"` // explanation for the decision
 }
 
 // HookOutput is the JSON response written to stdout for Claude Code to consume.
 // For UserPromptSubmit, additionalContext is APPENDED to Claude's context
 // alongside the original prompt — it does not replace it.
 type HookOutput struct {
+	SuppressOutput     bool                `json:"suppressOutput,omitempty"`
 	HookSpecificOutput *HookSpecificOutput `json:"hookSpecificOutput,omitempty"`
 }
 
@@ -68,10 +79,10 @@ func PassthroughOutput() *HookOutput {
 // conversation alongside the user's original prompt.
 func ContextOutput(context string) *HookOutput {
 	return &HookOutput{
+		SuppressOutput: true,
 		HookSpecificOutput: &HookSpecificOutput{
 			HookEventName:     "UserPromptSubmit",
 			AdditionalContext: context,
-			SuppressOutput:    true,
 		},
 	}
 }
@@ -84,6 +95,19 @@ func BlockOutput(reason string) *HookOutput {
 			HookEventName: "UserPromptSubmit",
 			Decision:      "block",
 			Reason:        reason,
+		},
+	}
+}
+
+// PermitOutput returns a PreToolUse permission decision.
+// decision is "allow" or "deny". For passthrough (no opinion), use PassthroughOutput().
+func PermitOutput(decision, reason string) *HookOutput {
+	return &HookOutput{
+		SuppressOutput: true,
+		HookSpecificOutput: &HookSpecificOutput{
+			HookEventName:           "PreToolUse",
+			PermissionDecision:       decision,
+			PermissionDecisionReason: reason,
 		},
 	}
 }
