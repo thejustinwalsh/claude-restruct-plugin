@@ -8,7 +8,7 @@ order: 800
 
 ## Overview
 
-10 milestones taking the scaffolded Go codebase to a production-ready Claude Code plugin with a monitoring dashboard and self-improvement capabilities. Each milestone has a dedicated spec file with detailed requirements.
+11 milestones taking the scaffolded Go codebase to a production-ready Claude Code plugin with a monitoring dashboard and self-improvement capabilities. Each milestone has a dedicated spec file with detailed requirements.
 
 ---
 
@@ -25,6 +25,7 @@ order: 800
 | M7 | [CLI UX & Configuration](M7-CLI-UX.md) | **~70% Done** | M2 | Doctor, model, config commands implemented. Needs auto-fix, error polish, completions, version check |
 | M8 | [Plugin Distribution & Installation](M8-PLUGIN-DIST.md) | **~60% Done** | M1, M7 | Plugin manifest, skills, cross-platform builds done. Needs install flow, uninstall, release automation |
 | M8.1 | [Build System (Make → xmake)](M8.1-BUILD-SYSTEM.md) | **Done** | — | xmake + pnpm workspaces, debug/release modes, `pnpm build` respects config, `pnpm release` for explicit release |
+| M8.2 | [Verification System](M8.2-VERIFICATION.md) | **Done** | M1, M4 | Mechanical enforcement via hooks: snapshot on TaskCreated, verify on TaskCompleted/Stop, exit code 2 blocks task on failure. Per-project `.restruct/verify.yaml` config |
 | M9 | [Testing & Calibration](M9-TESTING.md) | **~50% Done** | M3, M4 | 213 tests across 13 packages. Integration tests use real CLAUDE.md + git. Needs eval framework, >80% coverage |
 | M10 | [Self-Improvement Loop](M10-SELF-IMPROVE.md) | Not Started | M4, M9 | Dashboard-driven feedback loop: rating analysis, system prompt refinement, rules suggestions |
 
@@ -175,6 +176,9 @@ These were previously open and have been resolved during implementation:
 | Setup skill | Auto-executes: checks RAM → selects model → installs Ollama → pulls model → warms. Uses `ollama` directly, not CLI wrappers | M8 implementation |
 | Build system | xmake (via npm `xmake-build-system`) + pnpm workspaces. Custom DSL modules (`xmake/phony.lua`, `xmake/go_build.lua`) for phony Go targets | M8.1 implementation |
 | Go build in xmake | Phony targets with direct `go build`, NOT `set_languages("go")`. xmake's native Go support is broken for Go 1.20+ ([#3586](https://github.com/xmake-io/xmake/issues/3586)) | M8.1 implementation |
+| Verification enforcement | Hook exit code 2, not LLM instructions. `restruct verify` runs shell checks and blocks on failure. Claude cannot ignore a hook exit code | M8.2 implementation |
+| Verification scope | Per-check globs filter which checks run against changed files. TypeScript changes don't trigger Go vet | M8.2 implementation |
+| Snapshot strategy | `git ls-files` for discovery (respects .gitignore), mtime+size for diff (fast, no content hashing). Task scope promotes to prompt scope on pass | M8.2 implementation |
 | Debug/release | Go build tags (`//go:build debug`). `embed_debug.go` returns nil FS + dev mode, `embed_release.go` embeds web dist | M8.1 implementation |
 | Dev workflow | `pnpm dev` → `xmake watch -d cli -r` (auto-rebuild + restart Go server) + Vite HMR, in parallel via pnpm workspaces | M8.1 implementation |
 
@@ -228,13 +232,16 @@ M1  (Hook Protocol)        ██████████  Done
  │                                    │
  │                                    └──► M8  (Plugin Dist)  ██████░░░░  ~60%
  │
- └── M8.1 (Build System)   ██████████  Done
-
+ ├── M8.1 (Build System)   ██████████  Done
+ │
+ └── M8.2 (Verification)   ██████████  Done
+      │    (M1 + M4)
+      │
  M3 + M4 ──► M9  (Testing)      █████░░░░░  ~50%
               └──► M10 (Self-Improve)  ░░░░░░░░░░
 ```
 
-**M1–M4 and M8.1 are complete.** Major session changes: v4 JSON classification pipeline (M3), LLM-selected rules by index (M5), git stripped to branch+commits with LLM activity summary (M5), 4-panel web detail view with `input_prompt`/`llm_output` (M4), wouter routing (M4), compose.go extraction, dynamic footer, xmake build mode fix. M5 needs file mention detection. M6 needs SQLite cache migration. M9 at 213 tests with real-data integration tests.
+**M1–M4, M8.1, and M8.2 are complete.** Major session changes: v4 JSON classification pipeline (M3), LLM-selected rules by index (M5), git stripped to branch+commits with LLM activity summary (M5), 4-panel web detail view with `input_prompt`/`llm_output` (M4), wouter routing (M4), compose.go extraction, dynamic footer, xmake build mode fix, mechanical verification via hooks (M8.2). M5 needs file mention detection. M6 needs SQLite cache migration. M9 at 213 tests with real-data integration tests.
 
 ---
 

@@ -40,6 +40,14 @@ are appended as additional context that guides Claude's behavior.`,
 		}
 		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 
+		// Hook commands must never exit 1 (undefined for hooks).
+		// Recover from panics and degrade gracefully to exit 0 (passthrough).
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("refine: panic recovered, passing through", "panic", r)
+			}
+		}()
+
 		input, err := hook.ParseInput(os.Stdin)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "restruct: parse error: %v\n", err)

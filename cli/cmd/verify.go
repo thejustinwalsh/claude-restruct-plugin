@@ -42,13 +42,23 @@ Used as a hook handler for TaskCompleted and Stop events.`,
 		}
 		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 
+		// Hook commands must never exit 1 (undefined for hooks).
+		// Recover from panics and degrade gracefully to exit 0 (allow).
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("verify: panic recovered, allowing", "panic", r)
+			}
+		}()
+
 		verifyStart := time.Now()
+		slog.Debug("verify: hook invoked")
 
 		input, err := hook.ParseInput(os.Stdin)
 		if err != nil {
 			slog.Warn("verify: parse error", "error", err)
 			return nil
 		}
+		slog.Debug("verify: parsed input", "hook_event", input.HookEventName, "session_id", input.SessionID, "task_id", input.TaskID, "stop_hook_active", input.StopHookActive)
 
 		cwd := input.Cwd
 		if cwd == "" {
@@ -146,6 +156,7 @@ Used as a hook handler for TaskCompleted and Stop events.`,
 
 		// Filter checks by changed files
 		relevant := verify.FilterChecks(cfg.Checks, changedFiles)
+		slog.Debug("verify: filtered checks", "total_checks", len(cfg.Checks), "relevant", len(relevant), "changed_files", len(changedFiles))
 		if len(relevant) == 0 {
 			slog.Debug("verify: no relevant checks for changed files")
 			recorder.RecordVerification(input.SessionID, refinementID, scope, input.HookEventName, cwd, projectDir, string(changedFilesJSON), "", "pass", time.Since(verifyStart).Microseconds())

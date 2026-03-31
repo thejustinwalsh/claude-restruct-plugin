@@ -21,6 +21,12 @@ var sessionStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Record a session start (called by SessionStart hook)",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("session start: panic recovered", "panic", r)
+			}
+		}()
+
 		input, err := hook.ParseInput(os.Stdin)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "restruct: session start parse error: %v\n", err)
@@ -61,6 +67,12 @@ var sessionEndCmd = &cobra.Command{
 	Use:   "end",
 	Short: "Record a session end (called by SessionEnd hook)",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("session end: panic recovered", "panic", r)
+			}
+		}()
+
 		input, err := hook.ParseInput(os.Stdin)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "restruct: session end parse error: %v\n", err)

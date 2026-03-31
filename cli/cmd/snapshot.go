@@ -28,6 +28,14 @@ Used as a hook handler for UserPromptSubmit and TaskCreated events.`,
 		}
 		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 
+		// Hook commands must never exit 1 (undefined for hooks).
+		// Recover from panics and degrade gracefully to exit 0 (allow).
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("snapshot: panic recovered, allowing", "panic", r)
+			}
+		}()
+
 		input, err := hook.ParseInput(os.Stdin)
 		if err != nil {
 			slog.Warn("snapshot: parse error", "error", err)
