@@ -575,6 +575,38 @@ func (d *DB) GetSessionStats(limit int) ([]SessionStat, error) {
 	return stats, rows.Err()
 }
 
+// --- Session metrics ---
+
+type SessionMetrics struct {
+	TotalRefinements      int     `json:"total_refinements"`
+	Passthroughs          int     `json:"passthroughs"`
+	CacheHits             int     `json:"cache_hits"`
+	AvgLatencyMs          float64 `json:"avg_latency_ms"`
+	TotalVerifications    int     `json:"total_verifications"`
+	VerificationPasses    int     `json:"verification_passes"`
+	VerificationFailures  int     `json:"verification_failures"`
+	DurationMinutes       float64 `json:"duration_minutes"`
+}
+
+func (d *DB) GetSessionMetrics(sessionID string) (*SessionMetrics, error) {
+	m := &SessionMetrics{}
+
+	d.pool.QueryRow(`SELECT COUNT(*) FROM refinements WHERE session_id = ?`, sessionID).Scan(&m.TotalRefinements)
+	d.pool.QueryRow(`SELECT COUNT(*) FROM refinements WHERE session_id = ? AND passthrough = TRUE`, sessionID).Scan(&m.Passthroughs)
+	d.pool.QueryRow(`SELECT COUNT(*) FROM refinements WHERE session_id = ? AND cache_hit = TRUE`, sessionID).Scan(&m.CacheHits)
+	d.pool.QueryRow(`SELECT COALESCE(AVG(latency_ms), 0) FROM refinements WHERE session_id = ? AND latency_ms > 0`, sessionID).Scan(&m.AvgLatencyMs)
+
+	d.pool.QueryRow(`SELECT COUNT(*) FROM verification_events WHERE session_id = ? AND event_type = 'verify'`, sessionID).Scan(&m.TotalVerifications)
+	d.pool.QueryRow(`SELECT COUNT(*) FROM verification_events WHERE session_id = ? AND event_type = 'verify' AND result = 'pass'`, sessionID).Scan(&m.VerificationPasses)
+	d.pool.QueryRow(`SELECT COUNT(*) FROM verification_events WHERE session_id = ? AND event_type = 'verify' AND result = 'fail'`, sessionID).Scan(&m.VerificationFailures)
+
+	d.pool.QueryRow(`
+		SELECT COALESCE((JULIANDAY(COALESCE(ended_at, CURRENT_TIMESTAMP)) - JULIANDAY(started_at)) * 24 * 60, 0)
+		FROM sessions WHERE id = ?`, sessionID).Scan(&m.DurationMinutes)
+
+	return m, nil
+}
+
 // --- Verification event operations ---
 
 type VerificationEvent struct {

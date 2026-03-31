@@ -94,6 +94,17 @@ export interface SessionStat {
   refinements: number;
 }
 
+export interface SessionMetrics {
+  total_refinements: number;
+  passthroughs: number;
+  cache_hits: number;
+  avg_latency_ms: number;
+  total_verifications: number;
+  verification_passes: number;
+  verification_failures: number;
+  duration_minutes: number;
+}
+
 export interface StatsData {
   refinements: RefinementStat[];
   pipeline: PipelineBreakdown[];
@@ -147,6 +158,8 @@ export const api = {
   session: (id: string) => fetchJSON<Session>(`/sessions/${id}`),
   sessionRefinements: (id: string) =>
     fetchJSON<Refinement[]>(`/sessions/${id}/refinements`),
+  sessionStats: (id: string) =>
+    fetchJSON<SessionMetrics>(`/sessions/${id}/stats`),
   refinements: (limit = 50, offset = 0) =>
     fetchJSON<Refinement[]>(`/refinements?limit=${limit}&offset=${offset}`),
   refinement: (id: number) =>

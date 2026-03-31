@@ -68,6 +68,7 @@ func New(database *db.DB, port string, devMode bool, webFS fs.FS, version string
 		r.Get("/sessions", s.handleListSessions)
 		r.Get("/sessions/{id}", s.handleGetSession)
 		r.Get("/sessions/{id}/refinements", s.handleSessionRefinements)
+		r.Get("/sessions/{id}/stats", s.handleSessionStats)
 
 		r.Get("/refinements", s.handleListRefinements)
 		r.Get("/refinements/{id}", s.handleGetRefinement)

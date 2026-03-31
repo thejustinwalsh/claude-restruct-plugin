@@ -80,6 +80,16 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, session)
 }
 
+func (s *Server) handleSessionStats(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	metrics, err := s.db.GetSessionMetrics(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
+}
+
 func (s *Server) handleSessionRefinements(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	refs, err := s.db.GetRefinementsForSession(id)

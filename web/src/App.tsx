@@ -3,7 +3,6 @@ import { Route, Switch, Link, useLocation, useRoute } from 'wouter';
 import '@/store'; // side-effect: initializes SSE bridge + periodic sync
 import { Dashboard } from '@/pages/Dashboard';
 import { Sessions } from '@/pages/Sessions';
-import { SessionDetail } from '@/pages/SessionDetail';
 import { RefinementDetail } from '@/pages/RefinementDetail';
 import { Stats } from '@/pages/Stats';
 import { api } from '@/api/client';
@@ -32,30 +31,22 @@ function DashboardRoute() {
   );
 }
 
-function SessionsRoute() {
+function SessionsRoute({ id }: { id?: string }) {
   const [, navigate] = useLocation();
   return (
-    <Sessions onSelectSession={(id) => navigate(`/sessions/${id}`)} />
-  );
-}
-
-function SessionDetailRoute({ id }: { id: string }) {
-  const [, navigate] = useLocation();
-  return (
-    <SessionDetail
-      id={id}
-      onBack={() => navigate('/sessions')}
-      onSelectRefinement={(id) => navigate(`/refinements/${id}`)}
+    <Sessions
+      selectedSessionId={id}
+      onSelectSession={(sid) => navigate(`/sessions/${sid}`)}
+      onSelectRefinement={(rid) => navigate(`/refinements/${rid}`)}
     />
   );
 }
 
 function RefinementDetailRoute({ id }: { id: string }) {
-  const [, navigate] = useLocation();
   return (
     <RefinementDetail
       id={parseInt(id, 10)}
-      onBack={() => navigate('/')}
+      onBack={() => history.back()}
     />
   );
 }
@@ -81,9 +72,11 @@ function App() {
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
         <Switch>
           <Route path="/" component={DashboardRoute} />
-          <Route path="/sessions" component={SessionsRoute} />
+          <Route path="/sessions">
+            {() => <SessionsRoute />}
+          </Route>
           <Route path="/sessions/:id">
-            {(params) => <SessionDetailRoute id={params.id} />}
+            {(params) => <SessionsRoute id={params.id} />}
           </Route>
           <Route path="/refinements/:id">
             {(params) => <RefinementDetailRoute id={params.id} />}
