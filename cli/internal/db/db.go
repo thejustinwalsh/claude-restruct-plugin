@@ -686,3 +686,138 @@ func (d *DB) GetMetrics() (*Metrics, error) {
 	}
 	return m, nil
 }
+
+// --- Tool decision operations ---
+
+// ToolDecision records a tool permission decision and its outcome.
+type ToolDecision struct {
+	ID               int64      `json:"id"`
+	SessionID        string     `json:"session_id"`
+	ProjectPath      string     `json:"project_path"`
+	ToolName         string     `json:"tool_name"`
+	ToolInputSummary string     `json:"tool_input_summary,omitempty"`
+	ToolUseID        string     `json:"tool_use_id,omitempty"`
+	HookDecision     *string    `json:"hook_decision,omitempty"`
+	HookTier         *int       `json:"hook_tier,omitempty"`
+	HookReason       *string    `json:"hook_reason,omitempty"`
+	HookDurationUs   *int64     `json:"hook_duration_us,omitempty"`
+	Outcome          string     `json:"outcome"`
+	ToolDurationMs   *int64     `json:"tool_duration_ms,omitempty"`
+	Reviewed         bool       `json:"reviewed"`
+	ReviewedAt       *time.Time `json:"reviewed_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+}
+
+// InsertToolDecision records a PreToolUse hook decision. Outcome starts as "pending".
+func (d *DB) InsertToolDecision(td *ToolDecision) (int64, error) {
+	res, err := d.pool.Exec(`
+		INSERT INTO tool_decisions (session_id, project_path, tool_name, tool_input_summary, tool_use_id, hook_decision, hook_tier, hook_reason, hook_duration_us, outcome)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		td.SessionID, td.ProjectPath, td.ToolName, td.ToolInputSummary, td.ToolUseID,
+		td.HookDecision, td.HookTier, td.HookReason, td.HookDurationUs, "pending",
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// UpdateToolOutcome sets the outcome for a tool decision identified by tool_use_id.
+func (d *DB) UpdateToolOutcome(toolUseID, outcome string, durationMs *int64) error {
+	_, err := d.pool.Exec(`
+		UPDATE tool_decisions SET outcome = ?, tool_duration_ms = ?
+		WHERE tool_use_id = ? AND outcome = 'pending'`,
+		outcome, durationMs, toolUseID,
+	)
+	return err
+}
+
+// GetUnreviewedDecisions returns tool decisions for a project that haven't been reviewed,
+// where the hook passed through but the user approved (candidates for auto-approval rules).
+func (d *DB) GetUnreviewedDecisions(projectPath string, limit int) ([]ToolDecision, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := d.pool.Query(`
+		SELECT id, session_id, project_path, tool_name, tool_input_summary, tool_use_id,
+			hook_decision, hook_tier, hook_reason, hook_duration_us,
+			outcome, tool_duration_ms, reviewed, reviewed_at, created_at
+		FROM tool_decisions
+		WHERE project_path = ? AND reviewed = FALSE AND hook_decision = 'passthrough' AND outcome = 'executed'
+		ORDER BY created_at DESC LIMIT ?`, projectPath, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var decisions []ToolDecision
+	for rows.Next() {
+		var td ToolDecision
+		if err := rows.Scan(&td.ID, &td.SessionID, &td.ProjectPath, &td.ToolName,
+			&td.ToolInputSummary, &td.ToolUseID, &td.HookDecision, &td.HookTier,
+			&td.HookReason, &td.HookDurationUs, &td.Outcome, &td.ToolDurationMs,
+			&td.Reviewed, &td.ReviewedAt, &td.CreatedAt); err != nil {
+			return nil, err
+		}
+		decisions = append(decisions, td)
+	}
+	return decisions, rows.Err()
+}
+
+// MarkDecisionsReviewed marks a batch of tool decisions as reviewed.
+func (d *DB) MarkDecisionsReviewed(ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := d.pool.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare("UPDATE tool_decisions SET reviewed = TRUE, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, id := range ids {
+		if _, err := stmt.Exec(id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// GetToolDecisionStats returns aggregate statistics for the dashboard.
+type ToolDecisionStats struct {
+	TotalDecisions     int     `json:"total_decisions"`
+	AutoApproved       int     `json:"auto_approved"`
+	Denied             int     `json:"denied"`
+	Passthrough        int     `json:"passthrough"`
+	Executed           int     `json:"executed"`
+	Pending            int     `json:"pending"`
+	Failed             int     `json:"failed"`
+	AvgHookDurationUs  float64 `json:"avg_hook_duration_us"`
+	UnreviewedCount    int     `json:"unreviewed_count"`
+}
+
+func (d *DB) GetToolDecisionStats(sessionID string) (*ToolDecisionStats, error) {
+	s := &ToolDecisionStats{}
+	clause := ""
+	var args []any
+	if sessionID != "" {
+		clause = " WHERE session_id = ?"
+		args = append(args, sessionID)
+	}
+	d.pool.QueryRow("SELECT COUNT(*) FROM tool_decisions"+clause, args...).Scan(&s.TotalDecisions)
+	d.pool.QueryRow("SELECT COUNT(*) FROM tool_decisions"+clause+" AND hook_decision = 'allow'", args...).Scan(&s.AutoApproved)
+	d.pool.QueryRow("SELECT COUNT(*) FROM tool_decisions"+clause+" AND hook_decision = 'deny'", args...).Scan(&s.Denied)
+	d.pool.QueryRow("SELECT COUNT(*) FROM tool_decisions"+clause+" AND hook_decision = 'passthrough'", args...).Scan(&s.Passthrough)
+	d.pool.QueryRow("SELECT COUNT(*) FROM tool_decisions"+clause+" AND outcome = 'executed'", args...).Scan(&s.Executed)
+	d.pool.QueryRow("SELECT COUNT(*) FROM tool_decisions"+clause+" AND outcome = 'pending'", args...).Scan(&s.Pending)
+	d.pool.QueryRow("SELECT COUNT(*) FROM tool_decisions"+clause+" AND outcome = 'failed'", args...).Scan(&s.Failed)
+	d.pool.QueryRow("SELECT COALESCE(AVG(hook_duration_us), 0) FROM tool_decisions"+clause+" AND hook_duration_us > 0", args...).Scan(&s.AvgHookDurationUs)
+	d.pool.QueryRow("SELECT COUNT(*) FROM tool_decisions WHERE reviewed = FALSE AND hook_decision = 'passthrough' AND outcome = 'executed'").Scan(&s.UnreviewedCount)
+	return s, nil
+}

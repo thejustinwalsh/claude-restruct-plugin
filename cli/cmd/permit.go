@@ -1,11 +1,15 @@
 package cmd
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/tjw/restruct/internal/config"
+	"github.com/tjw/restruct/internal/db"
 	"github.com/tjw/restruct/internal/hook"
 	"github.com/tjw/restruct/internal/permit"
 )
@@ -16,8 +20,8 @@ var permitCmd = &cobra.Command{
 	Long: `Reads a PreToolUse hook JSON payload from stdin, classifies the tool
 operation by security tier, and returns allow/deny/passthrough.
 
-Deterministic classification only — no DB, no LLM, no network calls.
-Target latency: <50ms.`,
+Deterministic classification only — no LLM, no network calls.
+Target latency: <50ms. DB write is best-effort after the decision.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		verbose, _ := cmd.Root().PersistentFlags().GetBool("verbose")
 		logLevel := slog.LevelWarn
@@ -26,8 +30,6 @@ Target latency: <50ms.`,
 		}
 		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 
-		// Hook commands must never exit 1 (undefined for hooks).
-		// Recover from panics and degrade gracefully to exit 0 (passthrough).
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("permit: panic recovered, passing through", "panic", r)
@@ -80,8 +82,10 @@ Target latency: <50ms.`,
 			"elapsed_us", elapsed.Microseconds(),
 		)
 
+		// Record decision to DB (best-effort, after the fast path)
+		go recordToolDecision(input, projectDir, decision, elapsed)
+
 		if decision.Action == "" {
-			// Passthrough: no opinion — Claude Code's native permission system handles it
 			return nil
 		}
 
@@ -89,9 +93,85 @@ Target latency: <50ms.`,
 			return hook.WriteOutput(os.Stdout, hook.PermitOutput("deny", decision.Reason))
 		}
 
-		// Allow
 		return hook.WriteOutput(os.Stdout, hook.PermitOutput("allow", decision.Reason))
 	},
+}
+
+// recordToolDecision writes the decision to SQLite. Best-effort — never blocks the hook.
+func recordToolDecision(input *hook.HookInput, projectDir string, decision permit.Decision, elapsed time.Duration) {
+	database, err := db.Open(db.DefaultPath())
+	if err != nil {
+		slog.Debug("permit: db open error (skipping record)", "error", err)
+		return
+	}
+	defer database.Close()
+
+	hookDecision := decision.Action
+	if hookDecision == "" {
+		hookDecision = "passthrough"
+	}
+	tier := decision.Tier
+	reason := decision.Reason
+	durationUs := elapsed.Microseconds()
+
+	verifyCfg, _ := config.LoadFromViper()
+	if verifyCfg == nil {
+		verifyCfg = config.Defaults()
+	}
+	serverURL := fmt.Sprintf("http://localhost:%s", verifyCfg.Server.Port)
+
+	recorder := db.NewRecorder(database, serverURL)
+	recorder.RecordToolDecision(&db.ToolDecision{
+		SessionID:        input.SessionID,
+		ProjectPath:      projectDir,
+		ToolName:         input.ToolName,
+		ToolInputSummary: summarizeToolInput(input.ToolName, input.ToolInput),
+		ToolUseID:        input.ToolUseID,
+		HookDecision:     &hookDecision,
+		HookTier:         &tier,
+		HookReason:       &reason,
+		HookDurationUs:   &durationUs,
+	})
+}
+
+// summarizeToolInput creates a short display string for the tool input.
+func summarizeToolInput(toolName string, input map[string]any) string {
+	switch toolName {
+	case "Bash":
+		cmd, _ := input["command"].(string)
+		if len(cmd) > 120 {
+			return cmd[:120] + "..."
+		}
+		return cmd
+	case "Read", "Write", "Edit":
+		path, _ := input["file_path"].(string)
+		return path
+	case "Glob":
+		pattern, _ := input["pattern"].(string)
+		return pattern
+	case "Grep":
+		pattern, _ := input["pattern"].(string)
+		path, _ := input["path"].(string)
+		return pattern + " in " + path
+	case "WebFetch":
+		url, _ := input["url"].(string)
+		return url
+	case "WebSearch":
+		query, _ := input["query"].(string)
+		return query
+	default:
+		// Collect first few string values
+		var parts []string
+		for k, v := range input {
+			if s, ok := v.(string); ok && s != "" {
+				parts = append(parts, k+"="+s)
+				if len(parts) >= 2 {
+					break
+				}
+			}
+		}
+		return strings.Join(parts, ", ")
+	}
 }
 
 func init() {

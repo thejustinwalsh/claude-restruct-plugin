@@ -156,6 +156,26 @@ func (r *Recorder) EndSession(sessionID string) {
 	}
 }
 
+// RecordToolDecision records a PreToolUse permission decision.
+func (r *Recorder) RecordToolDecision(td *ToolDecision) int64 {
+	id, err := r.db.InsertToolDecision(td)
+	if err != nil {
+		slog.Warn("failed to record tool decision", "error", err)
+		return 0
+	}
+	return id
+}
+
+// UpdateToolOutcome updates a pending tool decision with the execution outcome.
+func (r *Recorder) UpdateToolOutcome(toolUseID, outcome string, durationMs *int64) {
+	if toolUseID == "" {
+		return
+	}
+	if err := r.db.UpdateToolOutcome(toolUseID, outcome, durationMs); err != nil {
+		slog.Warn("failed to update tool outcome", "error", err, "tool_use_id", toolUseID)
+	}
+}
+
 // broadcastVerification POSTs a verification event to the server for SSE delivery.
 // Best-effort: failures are logged, never block the caller.
 func (r *Recorder) broadcastVerification(e *VerificationEvent) {
