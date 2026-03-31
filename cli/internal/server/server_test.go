@@ -21,7 +21,7 @@ func testServer(t *testing.T) (*Server, *db.DB) {
 	}
 	t.Cleanup(func() { d.Close() })
 
-	s := New(d, "0", true, nil)
+	s := New(d, "0", true, nil, "test")
 	return s, d
 }
 
@@ -208,7 +208,7 @@ func TestRefinementEventsEndpoint(t *testing.T) {
 		SessionID: "sess-ev", ProjectPath: "/tmp", RawPrompt: "test", Status: "complete",
 	})
 	d.InsertPipelineEvent(&db.PipelineEvent{
-		RefinementID: id, Stage: "rules_load", DurationMs: 50, Success: true,
+		RefinementID: id, Stage: "rules_load", DurationUs: 50000, Success: true,
 	})
 
 	w := doReq(t, s, "GET", "/api/refinements/"+itoa(id)+"/events", "")

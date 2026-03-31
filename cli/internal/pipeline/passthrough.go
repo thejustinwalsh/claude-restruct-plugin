@@ -50,6 +50,11 @@ func ShouldRefine(prompt string) bool {
 		return false
 	}
 
+	// Explicit bypass: "| " prefix skips refinement entirely
+	if strings.HasPrefix(s, "| ") {
+		return false
+	}
+
 	lower := strings.ToLower(s)
 
 	// Exact match against known passthrough phrases

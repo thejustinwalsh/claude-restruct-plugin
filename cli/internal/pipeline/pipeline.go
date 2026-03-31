@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/tjw/restruct/internal/cache"
 	"github.com/tjw/restruct/internal/config"
+	"github.com/tjw/restruct/internal/db"
 	"github.com/tjw/restruct/internal/git"
 	"github.com/tjw/restruct/internal/ollama"
 	"github.com/tjw/restruct/internal/prompt"
@@ -16,7 +19,6 @@ import (
 )
 
 // LLMClient is the interface the pipeline uses for LLM communication.
-// Allows mocking in tests.
 type LLMClient interface {
 	IsAvailable(ctx context.Context) bool
 	EnsureModel(ctx context.Context) error
@@ -34,6 +36,11 @@ type GitProvider interface {
 	GetContext() (*git.Context, error)
 }
 
+// SessionProvider retrieves recent session context for the local LLM.
+type SessionProvider interface {
+	GetRecentIntents(sessionID string, limit int) ([]db.SessionClip, error)
+}
+
 // CacheStore is the interface for prompt caching.
 type CacheStore interface {
 	Get(rawPrompt, rulesHash string) (string, bool)
@@ -48,11 +55,13 @@ type TimingResult struct {
 
 // RefineResult contains the pipeline output plus metadata.
 type RefineResult struct {
-	Refined   string
-	CacheHit  bool
-	NoContext bool // LLM determined no additional context needed
-	Timings   []TimingResult
-	TotalTime time.Duration
+	Refined     string
+	InputPrompt string // system + user message sent to the local LLM
+	LLMOutput   string // raw output from the local LLM (before parsing/composition)
+	CacheHit    bool
+	NoContext   bool // LLM determined no additional context needed
+	Timings     []TimingResult
+	TotalTime   time.Duration
 }
 
 // NoContextSentinel is the literal string the local LLM outputs when
@@ -61,17 +70,21 @@ const NoContextSentinel = "NO_ADDITIONAL_CONTEXT"
 
 // Pipeline orchestrates the prompt refinement process.
 type Pipeline struct {
-	llm     LLMClient
-	rules   RulesLoader
-	git     GitProvider
-	builder *prompt.Builder
-	cache   CacheStore
-	cfg     *config.Config
+	llm       LLMClient
+	rules     RulesLoader
+	git       GitProvider
+	session   SessionProvider
+	sessionID string
+	builder   *prompt.Builder
+	cache     CacheStore
+	cfg       *config.Config
 }
 
 // New creates a Pipeline from the given configuration.
-func New(cfg *config.Config) (*Pipeline, error) {
-	cwd := "."
+func New(cfg *config.Config, cwd string) (*Pipeline, error) {
+	if cwd == "" {
+		cwd = "."
+	}
 	client, err := ollama.NewClient(
 		cfg.Ollama.URL,
 		cfg.Ollama.Model,
@@ -93,6 +106,12 @@ func New(cfg *config.Config) (*Pipeline, error) {
 	}, nil
 }
 
+// SetSessionProvider attaches a session context provider and session ID.
+func (p *Pipeline) SetSessionProvider(sp SessionProvider, sessionID string) {
+	p.session = sp
+	p.sessionID = sessionID
+}
+
 // NewWithDeps creates a Pipeline with injected dependencies (for testing).
 func NewWithDeps(llm LLMClient, rl RulesLoader, gp GitProvider, cs CacheStore, cfg *config.Config) *Pipeline {
 	return &Pipeline{
@@ -106,7 +125,6 @@ func NewWithDeps(llm LLMClient, rl RulesLoader, gp GitProvider, cs CacheStore, c
 }
 
 // Refine takes a raw user prompt and returns structured, rules-aware additional context.
-// On any failure, returns an error — the caller (cmd/refine.go) decides to passthrough.
 func (p *Pipeline) Refine(ctx context.Context, rawPrompt string, sink ollama.TokenSink) (*RefineResult, error) {
 	start := time.Now()
 	result := &RefineResult{}
@@ -140,9 +158,27 @@ func (p *Pipeline) Refine(ctx context.Context, rawPrompt string, sink ollama.Tok
 		}
 	})
 
-	// 2. Check cache
+	// 2. Gather git context
+	var gitCtx *git.Context
+	timer("git_context", func() {
+		var err error
+		gitCtx, err = p.git.GetContext()
+		if err != nil {
+			slog.Warn("git context failed, continuing without", "error", err)
+			gitCtx = &git.Context{}
+			return
+		}
+		if gitCtx.Branch != "" {
+			slog.Debug("git context gathered", "branch", gitCtx.Branch, "commits", len(gitCtx.RecentCommits))
+		}
+	})
+
+	// 3. Build cache key
+	cacheKey := buildCacheKey(rawPrompt, rulesHash)
+
+	// 4. Check cache
 	timer("cache_check", func() {
-		if cached, ok := p.cache.Get(rawPrompt, rulesHash); ok {
+		if cached, ok := p.cache.Get(cacheKey, ""); ok {
 			result.Refined = cached
 			result.CacheHit = true
 			slog.Info("cache hit", "prompt_words", len(strings.Fields(rawPrompt)))
@@ -153,27 +189,31 @@ func (p *Pipeline) Refine(ctx context.Context, rawPrompt string, sink ollama.Tok
 		return result, nil
 	}
 
-	// 3. Gather git context
-	var gitStr string
-	timer("git_context", func() {
-		gitCtx, err := p.git.GetContext()
-		if err != nil {
-			slog.Warn("git context failed, continuing without", "error", err)
+	// 5. Gather session context
+	var sessionCtx string
+	timer("session_context", func() {
+		if p.session == nil || p.sessionID == "" {
 			return
 		}
-		gitStr = gitCtx.String()
-		if gitStr != "" {
-			slog.Debug("git context gathered", "branch", gitCtx.Branch, "commits", len(gitCtx.RecentCommits))
+		clips, err := p.session.GetRecentIntents(p.sessionID, 5)
+		if err != nil {
+			slog.Warn("session context failed, continuing without", "error", err)
+			return
+		}
+		sessionCtx = formatSessionClips(clips)
+		if sessionCtx != "" {
+			slog.Debug("session context gathered", "clips", len(clips))
 		}
 	})
 
-	// 4. Build LLM messages
-	var systemMsg, userMsg string
+	// 6. Build LLM messages (with numbered rules)
+	var buildResult *prompt.BuildResult
 	timer("prompt_build", func() {
-		systemMsg, userMsg = p.builder.Build(rawPrompt, rulesContent, gitStr)
+		buildResult = p.builder.Build(rawPrompt, rulesContent, gitCtx.String(), sessionCtx)
 	})
+	result.InputPrompt = "## System Prompt\n" + buildResult.SystemMsg + "\n\n## User Message\n" + buildResult.UserMsg
 
-	// 5. Check Ollama availability (fast — uses connect timeout)
+	// 7. Check Ollama availability
 	timer("ollama_check", func() {
 		if !p.llm.IsAvailable(ctx) {
 			slog.Warn("ollama not available, cannot refine")
@@ -183,22 +223,22 @@ func (p *Pipeline) Refine(ctx context.Context, rawPrompt string, sink ollama.Tok
 		return nil, fmt.Errorf("ollama is not available at configured URL")
 	}
 
-	// 6. Ensure model is loaded
+	// 8. Ensure model is loaded
 	timer("model_ensure", func() {
 		if err := p.llm.EnsureModel(ctx); err != nil {
 			slog.Warn("model ensure failed", "error", err)
 		}
 	})
 
-	// 7. Call LLM (streaming with retry and stall detection)
+	// 9. Call LLM
 	promptWords := len(strings.Fields(rawPrompt))
 	slog.Info("refining prompt", "words", promptWords, "model", p.cfg.Ollama.Model)
 
-	var refined string
+	var llmRaw string
 	var llmErr error
 	timer("ollama_inference", func() {
-		refined, llmErr = p.llm.ChatWithRetry(
-			ctx, systemMsg, userMsg,
+		llmRaw, llmErr = p.llm.ChatWithRetry(
+			ctx, buildResult.SystemMsg, buildResult.UserMsg,
 			float32(p.cfg.Refinement.Temperature),
 			p.cfg.Refinement.MaxTokens,
 			sink,
@@ -207,9 +247,10 @@ func (p *Pipeline) Refine(ctx context.Context, rawPrompt string, sink ollama.Tok
 	if llmErr != nil {
 		return nil, fmt.Errorf("ollama inference: %w", llmErr)
 	}
+	result.LLMOutput = llmRaw
 
-	// 8. Check for no-context sentinel
-	if strings.TrimSpace(refined) == NoContextSentinel {
+	// 10. Check for no-context sentinel
+	if strings.TrimSpace(llmRaw) == NoContextSentinel {
 		result.NoContext = true
 		result.Refined = ""
 		result.TotalTime = time.Since(start)
@@ -217,30 +258,40 @@ func (p *Pipeline) Refine(ctx context.Context, rawPrompt string, sink ollama.Tok
 		return result, nil
 	}
 
-	// 9. Validate output
-	timer("validation", func() {
-		if err := validateOutput(refined, rawPrompt); err != nil {
-			slog.Warn("output validation failed, discarding", "error", err)
-			llmErr = fmt.Errorf("validation: %w", err)
+	// 11. Parse LLM JSON output
+	var classification *LLMClassification
+	timer("parse", func() {
+		var err error
+		classification, err = parseLLMOutput(llmRaw)
+		if err != nil {
+			slog.Warn("LLM output parse failed", "error", err)
+			llmErr = fmt.Errorf("parse: %w", err)
 		}
 	})
 	if llmErr != nil {
 		return nil, llmErr
 	}
 
-	// 9. Cache result
+	// 12. Compose final context XML from classification + static data + git
+	var composed string
+	timer("compose", func() {
+		composed = composeContext(classification, buildResult.Rules, gitCtx.Branch)
+	})
+
+	// 13. Cache result
 	timer("cache_write", func() {
-		if err := p.cache.Put(rawPrompt, rulesHash, refined); err != nil {
+		if err := p.cache.Put(cacheKey, "", composed); err != nil {
 			slog.Warn("cache write failed", "error", err)
 		}
 	})
 
-	result.Refined = refined
+	result.Refined = composed
 	result.TotalTime = time.Since(start)
 
 	slog.Info("refinement complete",
 		"input_words", promptWords,
-		"output_words", len(strings.Fields(refined)),
+		"output_words", len(strings.Fields(composed)),
+		"type", classification.Type,
 		"total_time", result.TotalTime,
 		"cache_hit", false,
 	)
@@ -248,25 +299,108 @@ func (p *Pipeline) Refine(ctx context.Context, rawPrompt string, sink ollama.Tok
 	return result, nil
 }
 
-// validateOutput checks that the LLM's output is usable.
-func validateOutput(refined, rawPrompt string) error {
-	refined = strings.TrimSpace(refined)
-	if refined == "" {
-		return fmt.Errorf("empty output")
+// --- LLM Output Parsing ---
+
+// LLMClassification is the JSON structure the local LLM produces.
+type LLMClassification struct {
+	Type              string   `json:"type"`
+	Intent            string   `json:"intent"`
+	RecentActivity    string   `json:"recent_activity"`
+	Analysis          []string `json:"analysis"`
+	RelevantRules     []int    `json:"relevant_rules"`
+	RelevantAntiPats  []int    `json:"relevant_anti_patterns"`
+	Clarification     []string `json:"clarification"`
+}
+
+// validTypes is the set of recognized request types.
+var validTypes = map[string]bool{
+	"code_change": true,
+	"refactor":    true,
+	"debug":       true,
+	"question":    true,
+	"docs":        true,
+}
+
+// parseLLMOutput extracts the JSON classification from the LLM's raw output.
+// Handles common LLM quirks: markdown fences, trailing text, BOM.
+func parseLLMOutput(raw string) (*LLMClassification, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("empty output")
 	}
-	if len(refined) < len(rawPrompt) {
-		return fmt.Errorf("output shorter than input (%d < %d bytes)", len(refined), len(rawPrompt))
-	}
-	// Check for system prompt leakage
-	leakMarkers := []string{
-		"You generate supplementary execution context",
-		"## What to produce",
-		"output is appended AFTER the developer",
-	}
-	for _, marker := range leakMarkers {
-		if strings.Contains(refined, marker) {
-			return fmt.Errorf("system prompt leak detected: contains %q", marker)
+
+	// Strip markdown code fences if present
+	if strings.HasPrefix(raw, "```") {
+		lines := strings.Split(raw, "\n")
+		// Remove first line (```json or ```) and last line (```)
+		start := 1
+		end := len(lines)
+		if end > 0 && strings.TrimSpace(lines[end-1]) == "```" {
+			end--
 		}
+		raw = strings.Join(lines[start:end], "\n")
 	}
-	return nil
+
+	// Find JSON object boundaries
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start == -1 || end == -1 || end <= start {
+		return nil, fmt.Errorf("no JSON object found in output")
+	}
+	raw = raw[start : end+1]
+
+	var c LLMClassification
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %w", err)
+	}
+
+	// Validate required fields
+	if c.Intent == "" {
+		return nil, fmt.Errorf("missing required field: intent")
+	}
+	if !validTypes[c.Type] {
+		// Default to code_change if type is unrecognized
+		slog.Warn("unrecognized type, defaulting to code_change", "type", c.Type)
+		c.Type = "code_change"
+	}
+
+	return &c, nil
+}
+
+// --- Helpers ---
+
+func buildCacheKey(rawPrompt, rulesHash string) string {
+	h := sha256.New()
+	h.Write([]byte(rawPrompt))
+	h.Write([]byte(rulesHash))
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+func formatSessionClips(clips []db.SessionClip) string {
+	if len(clips) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, c := range clips {
+		age := formatAge(c.AgoSec)
+		intent := c.Intent
+		if intent == "" {
+			intent = c.RawPrompt
+			if len(intent) > 100 {
+				intent = intent[:100] + "..."
+			}
+		}
+		fmt.Fprintf(&b, "- %s ago: %s\n", age, intent)
+	}
+	return b.String()
+}
+
+func formatAge(seconds int64) string {
+	if seconds < 60 {
+		return fmt.Sprintf("%ds", seconds)
+	}
+	if seconds < 3600 {
+		return fmt.Sprintf("%dm", seconds/60)
+	}
+	return fmt.Sprintf("%dh", seconds/3600)
 }

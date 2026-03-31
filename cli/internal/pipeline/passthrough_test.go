@@ -13,6 +13,10 @@ func TestShouldRefine(t *testing.T) {
 		{"", false},
 		{"   ", false},
 
+		// Explicit bypass with "| " prefix
+		{"| fix the bug without refinement", false},
+		{"| just do it raw", false},
+
 		// Affirmatives
 		{"yes", false},
 		{"YES", false},
@@ -104,6 +108,10 @@ func TestShouldRefine(t *testing.T) {
 		// Numbers that aren't selections
 		{"add 3 retries to the http client", true},
 		{"fix issue 42", true},
+
+		// Pipe without space or in the middle — should still refine
+		{"|no space", true},
+		{"fix the bug | grep error", true},
 	}
 
 	for _, tt := range tests {

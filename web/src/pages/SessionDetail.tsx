@@ -1,4 +1,5 @@
-import { useApi } from '@/hooks/useApi';
+import { useEffect, useState } from 'react';
+import { useActions } from '@/store';
 import { api } from '@/api/client';
 import type { Session, Refinement } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,11 +14,17 @@ export function SessionDetail({
   onBack: () => void;
   onSelectRefinement: (id: number) => void;
 }) {
-  const { data: session } = useApi<Session>(() => api.session(id), [id]);
-  const { data: refinements } = useApi<Refinement[]>(
-    () => api.sessionRefinements(id),
-    [id],
-  );
+  const [session, setSession] = useState<Session | null>(null);
+  const [refinements, setRefinements] = useState<Refinement[]>([]);
+  const { fetchSessionRefinements } = useActions();
+
+  useEffect(() => {
+    api
+      .session(id)
+      .then(setSession)
+      .catch(() => {});
+    fetchSessionRefinements(id).then(setRefinements);
+  }, [id, fetchSessionRefinements]);
 
   return (
     <div className="space-y-6">
@@ -66,16 +73,16 @@ export function SessionDetail({
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">
-            Refinements ({refinements?.length ?? 0})
+            Refinements ({refinements.length})
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {refinements?.length === 0 && (
+          {refinements.length === 0 && (
             <p className="text-muted-foreground p-4 text-sm">
               No refinements in this session.
             </p>
           )}
-          {refinements?.map((r) => (
+          {refinements.map((r) => (
             <button
               key={r.id}
               onClick={() => onSelectRefinement(r.id)}

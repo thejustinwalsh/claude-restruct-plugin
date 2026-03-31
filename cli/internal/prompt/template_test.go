@@ -12,8 +12,8 @@ func TestSystemPrompt_ReturnsEmbeddedDefault(t *testing.T) {
 	if p == "" {
 		t.Fatal("embedded default system prompt should not be empty")
 	}
-	if !strings.Contains(p, "context_supplement") {
-		t.Error("embedded prompt should reference context_supplement format")
+	if !strings.Contains(p, "context") {
+		t.Error("embedded prompt should reference context format")
 	}
 }
 

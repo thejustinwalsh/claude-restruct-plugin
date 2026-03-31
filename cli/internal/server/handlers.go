@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/tjw/restruct/internal/db"
 	"github.com/tjw/restruct/internal/server/sse"
 )
 
@@ -17,6 +18,15 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{
+		"version":  s.version,
+		"mode":     db.BuildMode,
+		"db_path":  db.DefaultPath(),
+		"plugin_id": db.PluginID(),
+	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -169,6 +179,30 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 // --- Stream endpoints (CLI → Server → SSE clients) ---
 
+func (s *Server) handleStreamActive(w http.ResponseWriter, r *http.Request) {
+	active := s.streamBuf.Active()
+	if active == nil {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+	writeJSON(w, http.StatusOK, active)
+}
+
+func (s *Server) handleStreamBuffer(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	stream, ok := s.streamBuf.Get(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, "no active stream for this refinement")
+		return
+	}
+	writeJSON(w, http.StatusOK, stream)
+}
+
 func (s *Server) handleStreamStart(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		RefinementID int64  `json:"refinement_id"`
@@ -180,6 +214,7 @@ func (s *Server) handleStreamStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	s.streamBuf.Start(payload.RefinementID, payload.SessionID, payload.RawPrompt, payload.Model)
 	s.hub.Broadcast(sse.Event{Type: "refinement:stream-start", Data: payload})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -195,6 +230,7 @@ func (s *Server) handleStreamToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	s.streamBuf.Append(payload.RefinementID, payload.Tokens, payload.SeqEnd)
 	s.hub.Broadcast(sse.Event{Type: "refinement:streaming", Data: payload})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -207,6 +243,7 @@ func (s *Server) handleStreamDone(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	s.streamBuf.End(payload.RefinementID)
 	s.hub.Broadcast(sse.Event{Type: "refinement:stream-end", Data: payload})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -220,6 +257,7 @@ func (s *Server) handleStreamError(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	s.streamBuf.SetError(payload.RefinementID, payload.Error)
 	s.hub.Broadcast(sse.Event{Type: "refinement:stream-error", Data: payload})
 	w.WriteHeader(http.StatusNoContent)
 }

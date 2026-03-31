@@ -9,6 +9,7 @@ import (
 	"github.com/tjw/restruct/internal/db"
 	"github.com/tjw/restruct/internal/hook"
 	"github.com/tjw/restruct/internal/session"
+	"github.com/tjw/restruct/internal/toggle"
 )
 
 var sessionCmd = &cobra.Command{
@@ -47,7 +48,11 @@ var sessionStartCmd = &cobra.Command{
 			recorder.RecordSession(input.SessionID, cwd, input.TranscriptPath)
 		}
 
-		fmt.Fprintf(os.Stderr, "restruct: session %s started\n", input.SessionID)
+		if toggle.IsEnabled(db.DataDir()) {
+			fmt.Fprintf(os.Stderr, "restruct: session %s started\n", input.SessionID)
+		} else {
+			fmt.Fprintf(os.Stderr, "restruct: session %s started (refinement DISABLED — run /restruct:enable to re-enable)\n", input.SessionID)
+		}
 		return nil
 	},
 }

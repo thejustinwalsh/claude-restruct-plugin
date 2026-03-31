@@ -23,6 +23,7 @@ func TestHttpTokenSink_NilSafe(t *testing.T) {
 	s.OnToken("hello")
 	s.OnDone()
 	s.OnError(nil)
+	s.Close()
 }
 
 type capturedReq struct {
@@ -52,8 +53,8 @@ func TestHttpTokenSink_Start(t *testing.T) {
 	s := NewHttpTokenSink(ts.URL, 42, "sess-1")
 
 	s.Start("fix the bug", "qwen2.5")
+	s.Close() // wait for background goroutine
 
-	time.Sleep(50 * time.Millisecond)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -73,8 +74,8 @@ func TestHttpTokenSink_OnDone(t *testing.T) {
 	s := NewHttpTokenSink(ts.URL, 1, "sess-1")
 
 	s.OnDone()
+	s.Close()
 
-	time.Sleep(50 * time.Millisecond)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -94,8 +95,8 @@ func TestHttpTokenSink_OnError(t *testing.T) {
 	s := NewHttpTokenSink(ts.URL, 1, "sess-1")
 
 	s.OnError(http.ErrAbortHandler)
+	s.Close()
 
-	time.Sleep(50 * time.Millisecond)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -119,11 +120,11 @@ func TestHttpTokenSink_Batching(t *testing.T) {
 	s.OnToken(" ")
 	s.OnToken("world")
 
-	// Wait for batch window + flush
-	time.Sleep(200 * time.Millisecond)
+	// Wait for batch window to fire
+	time.Sleep(150 * time.Millisecond)
 
 	s.OnDone()
-	time.Sleep(100 * time.Millisecond)
+	s.Close()
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -160,9 +161,8 @@ func TestHttpTokenSink_LargeBatchFlush(t *testing.T) {
 		s.OnToken("x")
 	}
 
-	time.Sleep(200 * time.Millisecond)
 	s.OnDone()
-	time.Sleep(100 * time.Millisecond)
+	s.Close()
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -184,13 +184,16 @@ func TestHttpTokenSink_DisablesOnServerDown(t *testing.T) {
 	s := NewHttpTokenSink("http://127.0.0.1:1", 1, "sess-1")
 
 	s.Start("test", "model")
-	time.Sleep(50 * time.Millisecond)
+	s.Close()
 
 	if !s.disabled.Load() {
 		t.Error("expected sink to disable after connection failure")
 	}
 
-	// Subsequent calls should be no-ops (not panic)
-	s.OnToken("hello")
-	s.OnDone()
+	// Create a new sink to test that disabled methods are no-ops
+	s2 := NewHttpTokenSink("http://127.0.0.1:1", 1, "sess-1")
+	s2.disabled.Store(true)
+	s2.OnToken("hello")
+	s2.OnDone()
+	s2.Close()
 }

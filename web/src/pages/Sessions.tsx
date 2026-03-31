@@ -1,5 +1,5 @@
-import { useApi } from '@/hooks/useApi';
-import { api } from '@/api/client';
+import { useEffect } from 'react';
+import { useSessions, useActions } from '@/store';
 import type { Session } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -36,10 +36,12 @@ export function Sessions({
 }: {
   onSelectSession: (id: string) => void;
 }) {
-  const { data: sessions, loading } = useApi<Session[]>(
-    () => api.sessions(),
-    [],
-  );
+  const sessions = useSessions();
+  const { fetchSessions } = useActions();
+
+  useEffect(() => {
+    fetchSessions();
+  }, [fetchSessions]);
 
   return (
     <div className="space-y-6">
@@ -50,15 +52,12 @@ export function Sessions({
           <CardTitle className="text-lg">All Sessions</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {loading && (
-            <p className="text-muted-foreground p-4 text-sm">Loading...</p>
-          )}
-          {sessions && sessions.length === 0 && (
+          {sessions.length === 0 && (
             <p className="text-muted-foreground p-4 text-sm">
               No sessions yet.
             </p>
           )}
-          {sessions?.map((s) => (
+          {sessions.map((s) => (
             <SessionRow
               key={s.id}
               s={s}

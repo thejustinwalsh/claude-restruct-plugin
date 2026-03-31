@@ -48,10 +48,15 @@ M2 (Core Pipeline) — needs stable pipeline to integrate into.
 
 **What:** Improve git context gathering beyond basic branch/log/diff.
 
-**Current behavior:** Branch name, last 5 commit messages, diff stat from HEAD~1.
+**Current behavior:** Branch name, last 5 commit messages, diff stat from HEAD~1, staged diff stat, working diff stat. All 5 git calls run in parallel via goroutines.
 
-**Improvements:**
-- **Changed files list:** Include `git diff --name-only HEAD` (unstaged) and `git diff --name-only --cached` (staged) — tells the LLM what the user is actively working on
+**Implemented (2026-03-28):**
+- **Staged changes:** `git diff --cached --stat` → `StagedStat` field — shows what's ready to commit
+- **Working changes:** `git diff --stat` → `WorkingStat` field — shows active edits
+- **Parallelized:** All git calls run concurrently (~50% faster than sequential)
+- **Cache-aware:** `buildCacheKey()` includes staged + working stats in hash
+
+**Remaining improvements:**
 - **File-prompt correlation:** If the user mentions a file name, include that file's recent git history (`git log --oneline -5 -- <file>`)
 - **Branch context:** If on a feature branch, include the branch name parsed for intent (e.g., `feature/auth-improvements` → "auth improvements feature")
 - **Stash awareness:** Note if there are stashed changes (might be relevant context)
@@ -63,13 +68,16 @@ M2 (Core Pipeline) — needs stable pipeline to integrate into.
 
 **Challenge:** The hook receives only the current prompt, not conversation history.
 
-**Approach:**
-- Claude Code hooks may include session context — investigate in M1 what data is available
-- If session context is available: include last 2-3 turns as context for the refinement LLM
-- If not available: detect follow-up patterns ("yes", "do that", "try option 2", "actually...") and:
-  - For very short follow-ups: passthrough (don't refine)
-  - For medium follow-ups with new information: refine with a note that this continues a conversation
-- **Session memory (lightweight):** Cache the last refined prompt per session. When a new prompt arrives, include the previous refined prompt as context. This helps the LLM understand what "that" or "it" refers to.
+**Implemented (2026-03-28):**
+- **Session clip extraction:** `db.GetRecentIntents()` queries last N completed refinements for the session, extracts `<intent>` tags from stored refined prompts
+- **Formatted session context:** `formatSessionClips()` produces "- 2m ago: Fixed auth token expiry" style entries, capped at 400 chars
+- **Pipeline integration:** `SetSessionProvider()` wires DB as session context source. New `session_context` pipeline stage
+- **Builder integration:** 4th arg to `Build()`, included as "## Recent Session Context" section in LLM input
+- **Follow-up detection:** Passthrough heuristics (affirmatives, numbered selections, slash commands) already handle short follow-ups
+
+**Remaining:**
+- **Transcript parsing:** Full transcript access for richer context (requires parsing JSONL transcript files)
+- **Session memory cache:** Keep last refined prompt per session for pronoun resolution ("that", "it")
 
 ### 5.5 — File Mention Detection
 

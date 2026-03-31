@@ -125,6 +125,7 @@ for _, plat in ipairs({
             go("plugin/bin/restruct-" .. _suffix, {
                 goos   = _goos,
                 goarch = _goarch,
+                tags   = is_mode("debug") and "debug" or nil,
             })
         end)
 

@@ -22,17 +22,51 @@ func NewLoader(projectDir string, files []string) *Loader {
 }
 
 // Load reads all existing rule files and returns their concatenated content.
+// Searches the project directory and walks up to the git root to find rules.
 func (l *Loader) Load() (string, error) {
+	dirs := l.searchDirs()
 	var parts []string
-	for _, f := range l.SearchPaths {
-		path := filepath.Join(l.ProjectDir, f)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue // File doesn't exist, skip
+	seen := make(map[string]bool)
+
+	for _, dir := range dirs {
+		for _, f := range l.SearchPaths {
+			path := filepath.Join(dir, f)
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				continue
+			}
+			if seen[abs] {
+				continue
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			seen[abs] = true
+			parts = append(parts, fmt.Sprintf("## Rules from %s\n%s", f, string(data)))
 		}
-		parts = append(parts, fmt.Sprintf("## Rules from %s\n%s", f, string(data)))
 	}
 	return strings.Join(parts, "\n\n"), nil
+}
+
+// searchDirs returns directories to search for rules files, starting from
+// ProjectDir and walking up to the git root (or filesystem root).
+func (l *Loader) searchDirs() []string {
+	dirs := []string{l.ProjectDir}
+	dir := l.ProjectDir
+	for {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break // reached filesystem root
+		}
+		dirs = append(dirs, parent)
+		// Stop at git root
+		if _, err := os.Stat(filepath.Join(parent, ".git")); err == nil {
+			break
+		}
+		dir = parent
+	}
+	return dirs
 }
 
 // Hash returns a SHA256 hash of the current rules content for cache keying.

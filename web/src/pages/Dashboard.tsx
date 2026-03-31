@@ -1,7 +1,10 @@
-import { useApi } from '@/hooks/useApi';
-import { useLiveFeed, useStreamingTokens } from '@/hooks/useSSE';
-import { api } from '@/api/client';
-import type { Metrics, Refinement } from '@/api/client';
+import {
+  useRefinementsList,
+  useStream,
+  useConnected,
+  useMetrics,
+} from '@/store';
+import type { Refinement } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -42,11 +45,22 @@ function RefinementRow({ r, onClick }: { r: Refinement; onClick: () => void }) {
       <div className="mb-1 flex items-center justify-between">
         <span className="text-muted-foreground text-xs">{time}</span>
         <div className="flex gap-1.5">
-          {r.cache_hit && <Badge variant="secondary">cached</Badge>}
-          {r.passthrough && <Badge variant="outline">passthrough</Badge>}
-          {!r.passthrough && !r.cache_hit && (
-            <Badge>{(r.latency_ms / 1000).toFixed(1)}s</Badge>
+          {r.status === 'pending' && (
+            <Badge variant="default" className="animate-pulse">
+              pending
+            </Badge>
           )}
+          {r.status === 'failed' && <Badge variant="destructive">failed</Badge>}
+          {r.status !== 'pending' && r.cache_hit && (
+            <Badge variant="secondary">cached</Badge>
+          )}
+          {r.status !== 'pending' && r.passthrough && (
+            <Badge variant="outline">passthrough</Badge>
+          )}
+          {r.status !== 'pending' &&
+            r.status !== 'failed' &&
+            !r.passthrough &&
+            !r.cache_hit && <Badge>{(r.latency_ms / 1000).toFixed(1)}s</Badge>}
         </div>
       </div>
       <p className="truncate text-sm">{r.raw_prompt}</p>
@@ -62,18 +76,10 @@ export function Dashboard({
 }: {
   onSelectRefinement: (id: number) => void;
 }) {
-  const { data: metrics } = useApi<Metrics>(() => api.metrics(), []);
-  const { data: recent } = useApi<Refinement[]>(() => api.refinements(20), []);
-  const { events: live, connected } = useLiveFeed();
-  const { stream } = useStreamingTokens();
-
-  // Merge live events with initial load, dedupe by id
-  const allRefinements = (() => {
-    const map = new Map<number, Refinement>();
-    for (const r of recent ?? []) map.set(r.id, r);
-    for (const r of live) map.set(r.id, r);
-    return [...map.values()].sort((a, b) => b.id - a.id);
-  })();
+  const metrics = useMetrics();
+  const connected = useConnected();
+  const stream = useStream();
+  const allRefinements = useRefinementsList();
 
   return (
     <div className="space-y-6">

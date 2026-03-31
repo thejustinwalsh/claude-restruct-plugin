@@ -1,66 +1,160 @@
-import { useApi } from '@/hooks/useApi';
-import { api } from '@/api/client';
+import { useEffect, useRef } from 'react';
+import { useRefinementDetail, useStream, useActions } from '@/store';
+import type { StreamState } from '@/store';
 import type { PipelineEvent } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { XmlHighlight } from '@/components/XmlHighlight';
 
+// Stage colors for the waterfall chart
+const stageColors: Record<string, string> = {
+  rules_load: 'var(--chart-1)',
+  cache_check: 'var(--chart-2)',
+  git_context: 'var(--chart-3)',
+  prompt_build: 'var(--chart-4)',
+  ollama_check: 'var(--chart-5)',
+  model_ensure: 'var(--chart-1)',
+  ollama_inference: 'var(--chart-3)',
+  validation: 'var(--chart-2)',
+  cache_store: 'var(--chart-4)',
+};
+
+function formatDuration(us: number): string {
+  if (us < 1000) return `${us}µs`;
+  if (us < 1_000_000) return `${(us / 1000).toFixed(1)}ms`;
+  return `${(us / 1_000_000).toFixed(1)}s`;
+}
+
 function PipelineTimeline({ events }: { events: PipelineEvent[] }) {
-  const maxDuration = Math.max(...events.map((e) => e.duration_ms), 1);
+  if (events.length === 0) return null;
+
+  const totalUs = events.reduce((sum, e) => sum + e.duration_us, 0);
+
+  // Compute display widths: each stage gets at least MIN_PCT so tiny stages
+  // are visible, then normalize so all widths sum to exactly 100%.
+  const MIN_PCT = 1;
+  const rawPcts = events.map((e) =>
+    totalUs > 0
+      ? Math.max((e.duration_us / totalUs) * 100, MIN_PCT)
+      : 100 / events.length,
+  );
+  const rawSum = rawPcts.reduce((s, v) => s + v, 0);
+  const displayPcts = rawPcts.map((p) => (p / rawSum) * 100);
+
+  // Build rows with cumulative left offsets
+  const rows: { event: PipelineEvent; leftPct: number; widthPct: number }[] =
+    [];
+  let offset = 0;
+  for (let i = 0; i < events.length; i++) {
+    rows.push({ event: events[i], leftPct: offset, widthPct: displayPcts[i] });
+    offset += displayPcts[i];
+  }
 
   return (
-    <div className="space-y-2">
-      {events.map((e) => (
-        <div key={e.id} className="flex items-center gap-3">
-          <span className="text-muted-foreground w-28 text-right font-mono text-xs">
-            {e.stage}
-          </span>
-          <div className="bg-muted h-5 flex-1 overflow-hidden rounded-sm">
-            <div
-              className={`h-full rounded-sm ${e.success ? 'bg-primary' : 'bg-destructive'}`}
-              style={{
-                width: `${Math.max((e.duration_ms / maxDuration) * 100, 2)}%`,
-              }}
-            />
+    <div className="space-y-1.5">
+      {rows.map(({ event: e, leftPct, widthPct }) => {
+        return (
+          <div key={e.id} className="flex items-center gap-3">
+            <span className="text-muted-foreground w-28 text-right font-mono text-xs">
+              {e.stage.replace(/_/g, ' ')}
+            </span>
+            <div className="bg-muted relative h-6 flex-1 overflow-hidden rounded-sm">
+              <div
+                className="absolute top-0 flex h-full items-center rounded-sm px-1.5"
+                style={{
+                  left: `${leftPct}%`,
+                  width: `${widthPct}%`,
+                  backgroundColor: stageColors[e.stage] ?? 'var(--chart-5)',
+                  opacity: e.success ? 0.85 : 1,
+                }}
+              >
+                {widthPct > 8 && (
+                  <span className="truncate font-mono text-[10px] text-white/90">
+                    {formatDuration(e.duration_us)}
+                  </span>
+                )}
+              </div>
+              {!e.success && (
+                <div
+                  className="bg-destructive absolute top-0 h-full rounded-sm"
+                  style={{
+                    left: `${leftPct}%`,
+                    width: `${widthPct}%`,
+                    opacity: 0.85,
+                  }}
+                />
+              )}
+            </div>
+            <span className="text-muted-foreground w-20 font-mono text-xs">
+              {formatDuration(e.duration_us)}
+            </span>
           </div>
-          <span className="text-muted-foreground w-16 font-mono text-xs">
-            {e.duration_ms < 1000
-              ? `${e.duration_ms}ms`
-              : `${(e.duration_ms / 1000).toFixed(1)}s`}
-          </span>
-        </div>
-      ))}
+        );
+      })}
+      <div className="text-muted-foreground mt-1 text-right font-mono text-xs">
+        Total: {formatDuration(totalUs)}
+      </div>
     </div>
   );
 }
 
-function PromptDiff({ raw, refined }: { raw: string; refined: string | null }) {
+function FlowStage({
+  label,
+  description,
+  content,
+  format,
+  stream,
+  status,
+}: {
+  label: string;
+  description: string;
+  content: string | null;
+  format?: 'xml' | 'text';
+  stream?: StreamState | null;
+  status?: string;
+}) {
+  const scrollRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current && stream?.isStreaming) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [stream?.text, stream?.isStreaming]);
+
+  const showStreaming =
+    status === 'pending' && stream && (stream.isStreaming || stream.text);
+
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-      <div>
-        <h3 className="text-muted-foreground mb-2 text-sm font-medium">
-          Raw Prompt
-        </h3>
-        <pre className="bg-muted rounded-lg p-4 text-sm break-words whitespace-pre-wrap">
-          {raw}
-        </pre>
-      </div>
-      <div>
-        <h3 className="text-muted-foreground mb-2 text-sm font-medium">
-          Refined (additionalContext)
-        </h3>
-        {refined ? (
-          <pre className="bg-muted max-h-[600px] overflow-auto rounded-lg p-4 font-mono text-sm break-words whitespace-pre-wrap">
-            <XmlHighlight code={refined} />
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">{label}</CardTitle>
+        <p className="text-muted-foreground text-xs">{description}</p>
+      </CardHeader>
+      <CardContent>
+        {content ? (
+          <pre className="bg-muted max-h-[500px] overflow-auto rounded-lg p-4 font-mono text-xs break-words whitespace-pre-wrap">
+            {format === 'xml' ? <XmlHighlight code={content} /> : content}
           </pre>
+        ) : showStreaming ? (
+          <pre
+            ref={scrollRef}
+            className="bg-muted max-h-[500px] overflow-auto rounded-lg p-4 font-mono text-xs break-words whitespace-pre-wrap"
+          >
+            {stream.text || 'Processing...'}
+            {stream.isStreaming && <span className="animate-pulse">▌</span>}
+          </pre>
+        ) : status === 'pending' ? (
+          <p className="text-muted-foreground p-4 text-xs italic">Pending...</p>
+        ) : status === 'failed' ? (
+          <p className="text-destructive p-4 text-xs italic">Failed</p>
         ) : (
-          <p className="text-muted-foreground p-4 text-sm italic">
-            Passthrough — no refinement generated
+          <p className="text-muted-foreground p-4 text-xs italic">
+            Not available
           </p>
         )}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -71,13 +165,19 @@ export function RefinementDetail({
   id: number;
   onBack: () => void;
 }) {
-  const { data, loading, error } = useApi(() => api.refinement(id), [id]);
+  const detail = useRefinementDetail(id);
+  const stream = useStream();
+  const { fetchRefinement } = useActions();
 
-  if (loading) return <p className="text-muted-foreground">Loading...</p>;
-  if (error) return <p className="text-destructive">Error: {error}</p>;
-  if (!data) return null;
+  // Fetch on mount if not in cache
+  useEffect(() => {
+    fetchRefinement(id);
+  }, [id, fetchRefinement]);
 
-  const { refinement: r, events } = data;
+  if (!detail) return <p className="text-muted-foreground">Loading...</p>;
+
+  const { refinement: r, events } = detail;
+  const activeStream = stream && stream.refinementId === id ? stream : null;
 
   return (
     <div className="space-y-6">
@@ -90,12 +190,20 @@ export function RefinementDetail({
         </button>
         <h1 className="text-2xl font-bold">Refinement #{r.id}</h1>
         <div className="flex gap-2">
+          {r.status === 'pending' && (
+            <Badge variant="default" className="animate-pulse">
+              Pending
+            </Badge>
+          )}
+          {r.status === 'failed' && <Badge variant="destructive">Failed</Badge>}
           {r.cache_hit && <Badge variant="secondary">Cached</Badge>}
           {r.passthrough && <Badge variant="outline">Passthrough</Badge>}
-          {r.output_valid === false && (
+          {r.status === 'complete' && r.output_valid === false && (
             <Badge variant="destructive">Invalid</Badge>
           )}
-          {r.output_valid === true && !r.passthrough && <Badge>Valid</Badge>}
+          {r.status === 'complete' &&
+            r.output_valid === true &&
+            !r.passthrough && <Badge>Valid</Badge>}
         </div>
       </div>
 
@@ -161,7 +269,34 @@ export function RefinementDetail({
 
       <Separator />
 
-      <PromptDiff raw={r.raw_prompt} refined={r.refined_prompt} />
+      <h2 className="text-lg font-semibold">Data Flow</h2>
+
+      <FlowStage
+        label="1. User Prompt"
+        description="What the developer typed in Claude Code"
+        content={r.raw_prompt}
+      />
+
+      <FlowStage
+        label="2. LLM Input"
+        description="System prompt + assembled user message sent to local Ollama model"
+        content={r.input_prompt}
+      />
+
+      <FlowStage
+        label="3. LLM Output"
+        description="Raw response from the local model (JSON classification)"
+        content={r.llm_output}
+        stream={activeStream}
+        status={r.status}
+      />
+
+      <FlowStage
+        label="4. Final Context (additionalContext)"
+        description="Composed XML injected into Claude's context window"
+        content={r.refined_prompt}
+        format="xml"
+      />
     </div>
   );
 }

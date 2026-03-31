@@ -172,11 +172,13 @@ The local LLM's job has changed. It is NOT generating a "replacement prompt." It
 
 ## Files Modified
 
-- `cli/internal/prompt/system_prompt.tmpl` — reframed for injection, not replacement
-- `cli/internal/prompt/builder.go` — improved context builder
+- `cli/internal/prompt/system_prompt.tmpl` — v3: renamed XML tags, scaled depth, few-shot examples
+- `cli/internal/prompt/builder.go` — 4-arg Build (prompt, rules, git, session), token budget
 - `cli/internal/prompt/template.go` — custom template loading
-- `cli/internal/pipeline/pipeline.go` — passthrough detection
-- `docs/OUTPUT-FORMAT.md` — injection format decision documentation
+- `cli/internal/prompt/framing.go` — injection framing with `<context>` wrapper
+- `cli/internal/pipeline/pipeline.go` — passthrough detection, `appendConstraints()` post-process
+- `cli/internal/prompt/versions/v3_considerations.tmpl` — version snapshot
+- `docs/reference/PROMPTING-RESEARCH.md` — research findings and citations
 
 ## Risk
 

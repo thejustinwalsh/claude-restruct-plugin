@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -103,13 +104,27 @@ func (d *DB) migrate() error {
 	return nil
 }
 
-// DefaultPath returns the default database path based on CLAUDE_PLUGIN_DATA or ~/.local/share/restruct.
-func DefaultPath() string {
-	if dir := os.Getenv("CLAUDE_PLUGIN_DATA"); dir != "" {
-		return filepath.Join(dir, "restruct.db")
+// DataDir returns the plugin data directory.
+// Uses CLAUDE_PLUGIN_DATA when set (production), otherwise computes the
+// same path Claude Code would resolve to, so dev and prod share one dir.
+// pluginID is defined in pluginid_debug.go / pluginid_release.go via build tags.
+func DataDir() string {
+	dir := os.Getenv("CLAUDE_PLUGIN_DATA")
+	if dir == "" {
+		home, _ := os.UserHomeDir()
+		dir = filepath.Join(home, ".claude", "plugins", "data", pluginID)
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "share", "restruct", "restruct.db")
+	return dir
+}
+
+// PluginID returns the plugin identifier used for data directory resolution.
+func PluginID() string {
+	return pluginID
+}
+
+// DefaultPath returns the database path.
+func DefaultPath() string {
+	return filepath.Join(DataDir(), "restruct.db")
 }
 
 // --- Data types ---
@@ -129,6 +144,8 @@ type Refinement struct {
 	ProjectPath   string    `json:"project_path"`
 	RawPrompt     string    `json:"raw_prompt"`
 	RefinedPrompt *string   `json:"refined_prompt,omitempty"`
+	InputPrompt   *string   `json:"input_prompt,omitempty"`
+	LLMOutput     *string   `json:"llm_output,omitempty"`
 	Model         string    `json:"model,omitempty"`
 	Temperature   float64   `json:"temperature,omitempty"`
 	LatencyMs     int64     `json:"latency_ms"`
@@ -139,11 +156,14 @@ type Refinement struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+// PipelineEvent stores stage timing data. The duration_ms column in SQLite
+// now stores microseconds (renamed from milliseconds for higher resolution).
+// The JSON field is duration_us for clarity.
 type PipelineEvent struct {
 	ID           int64     `json:"id"`
 	RefinementID int64     `json:"refinement_id"`
 	Stage        string    `json:"stage"`
-	DurationMs   int64     `json:"duration_ms"`
+	DurationUs   int64     `json:"duration_us"`
 	Success      bool      `json:"success"`
 	Metadata     string    `json:"metadata,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -207,9 +227,9 @@ func (d *DB) InsertRefinement(r *Refinement) (int64, error) {
 		status = "complete"
 	}
 	res, err := d.pool.Exec(`
-		INSERT INTO refinements (session_id, project_path, raw_prompt, refined_prompt, model, temperature, latency_ms, cache_hit, passthrough, output_valid, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.SessionID, r.ProjectPath, r.RawPrompt, r.RefinedPrompt, r.Model, r.Temperature, r.LatencyMs, r.CacheHit, r.Passthrough, r.OutputValid, status,
+		INSERT INTO refinements (session_id, project_path, raw_prompt, refined_prompt, input_prompt, llm_output, model, temperature, latency_ms, cache_hit, passthrough, output_valid, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.SessionID, r.ProjectPath, r.RawPrompt, r.RefinedPrompt, r.InputPrompt, r.LLMOutput, r.Model, r.Temperature, r.LatencyMs, r.CacheHit, r.Passthrough, r.OutputValid, status,
 	)
 	if err != nil {
 		return 0, err
@@ -224,10 +244,11 @@ func (d *DB) UpdateRefinement(id int64, r *Refinement) error {
 	}
 	_, err := d.pool.Exec(`
 		UPDATE refinements SET
-			refined_prompt = ?, model = ?, temperature = ?, latency_ms = ?,
+			refined_prompt = ?, input_prompt = COALESCE(?, input_prompt), llm_output = COALESCE(?, llm_output),
+			model = ?, temperature = ?, latency_ms = ?,
 			cache_hit = ?, passthrough = ?, output_valid = ?, status = ?
 		WHERE id = ?`,
-		r.RefinedPrompt, r.Model, r.Temperature, r.LatencyMs,
+		r.RefinedPrompt, r.InputPrompt, r.LLMOutput, r.Model, r.Temperature, r.LatencyMs,
 		r.CacheHit, r.Passthrough, r.OutputValid, status, id,
 	)
 	return err
@@ -235,7 +256,7 @@ func (d *DB) UpdateRefinement(id int64, r *Refinement) error {
 
 func (d *DB) ListRefinements(limit, offset int) ([]Refinement, error) {
 	rows, err := d.pool.Query(`
-		SELECT id, session_id, project_path, raw_prompt, refined_prompt, model, temperature, latency_ms, cache_hit, passthrough, output_valid, created_at
+		SELECT id, session_id, project_path, raw_prompt, refined_prompt, input_prompt, llm_output, model, temperature, latency_ms, cache_hit, passthrough, output_valid, status, created_at
 		FROM refinements ORDER BY created_at DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
@@ -245,7 +266,7 @@ func (d *DB) ListRefinements(limit, offset int) ([]Refinement, error) {
 	var refs []Refinement
 	for rows.Next() {
 		var r Refinement
-		if err := rows.Scan(&r.ID, &r.SessionID, &r.ProjectPath, &r.RawPrompt, &r.RefinedPrompt, &r.Model, &r.Temperature, &r.LatencyMs, &r.CacheHit, &r.Passthrough, &r.OutputValid, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.ProjectPath, &r.RawPrompt, &r.RefinedPrompt, &r.InputPrompt, &r.LLMOutput, &r.Model, &r.Temperature, &r.LatencyMs, &r.CacheHit, &r.Passthrough, &r.OutputValid, &r.Status, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		refs = append(refs, r)
@@ -256,8 +277,8 @@ func (d *DB) ListRefinements(limit, offset int) ([]Refinement, error) {
 func (d *DB) GetRefinement(id int64) (*Refinement, error) {
 	var r Refinement
 	err := d.pool.QueryRow(`
-		SELECT id, session_id, project_path, raw_prompt, refined_prompt, model, temperature, latency_ms, cache_hit, passthrough, output_valid, created_at
-		FROM refinements WHERE id = ?`, id).Scan(&r.ID, &r.SessionID, &r.ProjectPath, &r.RawPrompt, &r.RefinedPrompt, &r.Model, &r.Temperature, &r.LatencyMs, &r.CacheHit, &r.Passthrough, &r.OutputValid, &r.CreatedAt)
+		SELECT id, session_id, project_path, raw_prompt, refined_prompt, input_prompt, llm_output, model, temperature, latency_ms, cache_hit, passthrough, output_valid, status, created_at
+		FROM refinements WHERE id = ?`, id).Scan(&r.ID, &r.SessionID, &r.ProjectPath, &r.RawPrompt, &r.RefinedPrompt, &r.InputPrompt, &r.LLMOutput, &r.Model, &r.Temperature, &r.LatencyMs, &r.CacheHit, &r.Passthrough, &r.OutputValid, &r.Status, &r.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -266,8 +287,8 @@ func (d *DB) GetRefinement(id int64) (*Refinement, error) {
 
 func (d *DB) GetRefinementsSince(lastID int64, limit int) ([]Refinement, error) {
 	rows, err := d.pool.Query(`
-		SELECT id, session_id, project_path, raw_prompt, refined_prompt, model, temperature, latency_ms, cache_hit, passthrough, output_valid, created_at
-		FROM refinements WHERE id > ? AND status = 'complete' ORDER BY id ASC LIMIT ?`, lastID, limit)
+		SELECT id, session_id, project_path, raw_prompt, refined_prompt, input_prompt, llm_output, model, temperature, latency_ms, cache_hit, passthrough, output_valid, status, created_at
+		FROM refinements WHERE id > ? AND status IN ('complete', 'failed') ORDER BY id ASC LIMIT ?`, lastID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +297,7 @@ func (d *DB) GetRefinementsSince(lastID int64, limit int) ([]Refinement, error) 
 	var refs []Refinement
 	for rows.Next() {
 		var r Refinement
-		if err := rows.Scan(&r.ID, &r.SessionID, &r.ProjectPath, &r.RawPrompt, &r.RefinedPrompt, &r.Model, &r.Temperature, &r.LatencyMs, &r.CacheHit, &r.Passthrough, &r.OutputValid, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.ProjectPath, &r.RawPrompt, &r.RefinedPrompt, &r.InputPrompt, &r.LLMOutput, &r.Model, &r.Temperature, &r.LatencyMs, &r.CacheHit, &r.Passthrough, &r.OutputValid, &r.Status, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		refs = append(refs, r)
@@ -284,9 +305,24 @@ func (d *DB) GetRefinementsSince(lastID int64, limit int) ([]Refinement, error) 
 	return refs, rows.Err()
 }
 
+// FailStalePending marks pending refinements older than maxAge as failed.
+// This cleans up refinements where the CLI crashed before completing them.
+func (d *DB) FailStalePending(maxAge time.Duration) (int64, error) {
+	// Use the same format as SQLite's CURRENT_TIMESTAMP (no T, no Z)
+	cutoff := time.Now().Add(-maxAge).UTC().Format("2006-01-02 15:04:05")
+	result, err := d.pool.Exec(
+		`UPDATE refinements SET status = 'failed' WHERE status = 'pending' AND created_at < ?`,
+		cutoff,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (d *DB) GetRefinementsForSession(sessionID string) ([]Refinement, error) {
 	rows, err := d.pool.Query(`
-		SELECT id, session_id, project_path, raw_prompt, refined_prompt, model, temperature, latency_ms, cache_hit, passthrough, output_valid, created_at
+		SELECT id, session_id, project_path, raw_prompt, refined_prompt, input_prompt, llm_output, model, temperature, latency_ms, cache_hit, passthrough, output_valid, status, created_at
 		FROM refinements WHERE session_id = ? ORDER BY created_at ASC`, sessionID)
 	if err != nil {
 		return nil, err
@@ -296,12 +332,72 @@ func (d *DB) GetRefinementsForSession(sessionID string) ([]Refinement, error) {
 	var refs []Refinement
 	for rows.Next() {
 		var r Refinement
-		if err := rows.Scan(&r.ID, &r.SessionID, &r.ProjectPath, &r.RawPrompt, &r.RefinedPrompt, &r.Model, &r.Temperature, &r.LatencyMs, &r.CacheHit, &r.Passthrough, &r.OutputValid, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.ProjectPath, &r.RawPrompt, &r.RefinedPrompt, &r.InputPrompt, &r.LLMOutput, &r.Model, &r.Temperature, &r.LatencyMs, &r.CacheHit, &r.Passthrough, &r.OutputValid, &r.Status, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		refs = append(refs, r)
 	}
 	return refs, rows.Err()
+}
+
+// --- Session context for pipeline ---
+
+// SessionClip is a compact summary of a recent refinement for feeding back
+// into the local LLM as conversation context.
+type SessionClip struct {
+	Intent    string `json:"intent"`
+	RawPrompt string `json:"raw_prompt"`
+	AgoSec    int64  `json:"ago_sec"`
+}
+
+// GetRecentIntents returns the last N completed refinements for a session,
+// ordered newest-first. Only returns refinements that have a refined_prompt.
+func (d *DB) GetRecentIntents(sessionID string, limit int) ([]SessionClip, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	rows, err := d.pool.Query(`
+		SELECT raw_prompt, refined_prompt,
+		       CAST((JULIANDAY('now') - JULIANDAY(created_at)) * 86400 AS INTEGER) as ago_sec
+		FROM refinements
+		WHERE session_id = ? AND status = 'complete' AND refined_prompt IS NOT NULL AND passthrough = FALSE
+		ORDER BY created_at DESC LIMIT ?`, sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var clips []SessionClip
+	for rows.Next() {
+		var raw, refined string
+		var ago int64
+		if err := rows.Scan(&raw, &refined, &ago); err != nil {
+			return nil, err
+		}
+		clips = append(clips, SessionClip{
+			Intent:    extractIntent(refined),
+			RawPrompt: raw,
+			AgoSec:    ago,
+		})
+	}
+	return clips, rows.Err()
+}
+
+// extractIntent pulls the text from <intent>...</intent> in a refined prompt.
+// Returns the raw prompt's first 100 chars as fallback if no intent tag found.
+func extractIntent(refined string) string {
+	const open = "<intent>"
+	const close = "</intent>"
+	start := strings.Index(refined, open)
+	if start == -1 {
+		return ""
+	}
+	start += len(open)
+	end := strings.Index(refined[start:], close)
+	if end == -1 {
+		return ""
+	}
+	return strings.TrimSpace(refined[start : start+end])
 }
 
 // --- Pipeline event operations ---
@@ -310,7 +406,7 @@ func (d *DB) InsertPipelineEvent(e *PipelineEvent) error {
 	_, err := d.pool.Exec(`
 		INSERT INTO pipeline_events (refinement_id, stage, duration_ms, success, metadata)
 		VALUES (?, ?, ?, ?, ?)`,
-		e.RefinementID, e.Stage, e.DurationMs, e.Success, e.Metadata,
+		e.RefinementID, e.Stage, e.DurationUs, e.Success, e.Metadata,
 	)
 	return err
 }
@@ -327,7 +423,7 @@ func (d *DB) GetPipelineEvents(refinementID int64) ([]PipelineEvent, error) {
 	var events []PipelineEvent
 	for rows.Next() {
 		var e PipelineEvent
-		if err := rows.Scan(&e.ID, &e.RefinementID, &e.Stage, &e.DurationMs, &e.Success, &e.Metadata, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.RefinementID, &e.Stage, &e.DurationUs, &e.Success, &e.Metadata, &e.CreatedAt); err != nil {
 			return nil, err
 		}
 		events = append(events, e)
@@ -350,11 +446,12 @@ type Metrics struct {
 // --- Stats (for charts) ---
 
 type RefinementStat struct {
-	ID         int64   `json:"id"`
-	CreatedAt  string  `json:"created_at"`
-	LatencyMs  int64   `json:"latency_ms"`
-	CacheHit   bool    `json:"cache_hit"`
-	Passthrough bool   `json:"passthrough"`
+	ID          int64   `json:"id"`
+	CreatedAt   string  `json:"created_at"`
+	LatencyMs   int64   `json:"latency_ms"`
+	CacheHit    bool    `json:"cache_hit"`
+	Passthrough bool    `json:"passthrough"`
+	PromptWords int     `json:"prompt_words"`
 	Model      string  `json:"model"`
 }
 
@@ -362,7 +459,7 @@ type PipelineBreakdown struct {
 	RefinementID int64  `json:"refinement_id"`
 	CreatedAt    string `json:"created_at"`
 	Stage        string `json:"stage"`
-	DurationMs   int64  `json:"duration_ms"`
+	DurationUs   int64  `json:"duration_us"`
 }
 
 type DailyCount struct {
@@ -381,7 +478,8 @@ func (d *DB) GetRefinementStats(limit int) ([]RefinementStat, error) {
 		limit = 200
 	}
 	rows, err := d.pool.Query(`
-		SELECT id, created_at, latency_ms, cache_hit, passthrough, model
+		SELECT id, created_at, latency_ms, cache_hit, passthrough, model,
+		       length(raw_prompt) - length(replace(raw_prompt, ' ', '')) + 1
 		FROM refinements WHERE status = 'complete'
 		ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
@@ -391,7 +489,7 @@ func (d *DB) GetRefinementStats(limit int) ([]RefinementStat, error) {
 	var stats []RefinementStat
 	for rows.Next() {
 		var s RefinementStat
-		if err := rows.Scan(&s.ID, &s.CreatedAt, &s.LatencyMs, &s.CacheHit, &s.Passthrough, &s.Model); err != nil {
+		if err := rows.Scan(&s.ID, &s.CreatedAt, &s.LatencyMs, &s.CacheHit, &s.Passthrough, &s.Model, &s.PromptWords); err != nil {
 			return nil, err
 		}
 		stats = append(stats, s)
@@ -417,7 +515,7 @@ func (d *DB) GetPipelineBreakdown(limit int) ([]PipelineBreakdown, error) {
 	var breakdown []PipelineBreakdown
 	for rows.Next() {
 		var b PipelineBreakdown
-		if err := rows.Scan(&b.RefinementID, &b.CreatedAt, &b.Stage, &b.DurationMs); err != nil {
+		if err := rows.Scan(&b.RefinementID, &b.CreatedAt, &b.Stage, &b.DurationUs); err != nil {
 			return nil, err
 		}
 		breakdown = append(breakdown, b)

@@ -15,28 +15,33 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/tjw/restruct/internal/db"
 	"github.com/tjw/restruct/internal/server/sse"
+	"github.com/tjw/restruct/internal/server/streambuf"
 )
 
 // Server is the restruct dashboard HTTP server.
 type Server struct {
-	db     *db.DB
-	hub    *sse.Hub
-	router chi.Router
-	port   string
-	srv    *http.Server
+	db        *db.DB
+	hub       *sse.Hub
+	streamBuf *streambuf.Buffer
+	router    chi.Router
+	port      string
+	version   string
+	srv       *http.Server
 }
 
-// New creates a new server.
 // New creates a new server. If webFS is non-nil, it serves the embedded SPA.
-func New(database *db.DB, port string, devMode bool, webFS fs.FS) *Server {
+func New(database *db.DB, port string, devMode bool, webFS fs.FS, version string) *Server {
 	hub := sse.NewHub()
+	sb := streambuf.New(5 * time.Minute)
 	r := chi.NewRouter()
 
 	s := &Server{
-		db:   database,
-		hub:  hub,
-		router: r,
-		port: port,
+		db:        database,
+		hub:       hub,
+		streamBuf: sb,
+		router:    r,
+		port:      port,
+		version:   version,
 	}
 
 	// Middleware
@@ -55,8 +60,9 @@ func New(database *db.DB, port string, devMode bool, webFS fs.FS) *Server {
 
 	// API routes
 	r.Route("/api", func(r chi.Router) {
-		r.Get("/events", hub.ServeHTTP)
+		r.Get("/events", s.handleSSE)
 		r.Get("/health", s.handleHealth)
+		r.Get("/info", s.handleInfo)
 		r.Get("/metrics", s.handleMetrics)
 
 		r.Get("/sessions", s.handleListSessions)
@@ -69,6 +75,8 @@ func New(database *db.DB, port string, devMode bool, webFS fs.FS) *Server {
 
 		r.Get("/stats", s.handleStats)
 
+		r.Get("/stream/active", s.handleStreamActive)
+		r.Get("/stream/buffer/{id}", s.handleStreamBuffer)
 		r.Post("/stream/start", s.handleStreamStart)
 		r.Post("/stream/token", s.handleStreamToken)
 		r.Post("/stream/done", s.handleStreamDone)
@@ -98,9 +106,63 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Start DB poller for SSE updates
 	go s.pollForUpdates(ctx)
+	// Start stream buffer pruner
+	go s.pruneStreamBuffers(ctx)
 
 	slog.Info("server starting", "port", s.port, "url", fmt.Sprintf("http://localhost:%s", s.port))
 	return s.srv.Serve(ln)
+}
+
+// handleSSE serves SSE connections with active stream replay on connect.
+func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
+	// Build init events from active streams so new clients catch up
+	active := s.streamBuf.Active()
+	var initEvents []sse.Event
+	for _, a := range active {
+		// Replay stream-start
+		initEvents = append(initEvents, sse.Event{
+			Type: "refinement:stream-start",
+			Data: map[string]interface{}{
+				"refinement_id": a.RefinementID,
+				"session_id":    a.SessionID,
+				"raw_prompt":    a.RawPrompt,
+				"model":         a.Model,
+			},
+		})
+		// Replay accumulated tokens
+		if a.Text != "" {
+			initEvents = append(initEvents, sse.Event{
+				Type: "refinement:streaming",
+				Data: map[string]interface{}{
+					"refinement_id": a.RefinementID,
+					"tokens":        a.Text,
+					"seq_start":     0,
+					"seq_end":       a.SeqEnd,
+				},
+			})
+		}
+	}
+	s.hub.ServeHTTPWithInit(w, r, initEvents)
+}
+
+// pruneStreamBuffers periodically removes expired stream buffers and
+// marks stale pending refinements in the DB as failed.
+func (s *Server) pruneStreamBuffers(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.streamBuf.Prune()
+			if n, err := s.db.FailStalePending(5 * time.Minute); err != nil {
+				slog.Warn("failed to prune stale pending refinements", "error", err)
+			} else if n > 0 {
+				slog.Info("pruned stale pending refinements", "count", n)
+			}
+		}
+	}
 }
 
 // Shutdown gracefully shuts down the server.
@@ -134,7 +196,15 @@ func (s *Server) pollForUpdates(ctx context.Context) {
 				continue
 			}
 			for _, r := range refs {
-				s.hub.Broadcast(sse.Event{Type: "refinement:new", Data: r})
+				// Include pipeline events so the frontend doesn't need to refetch
+				events, _ := s.db.GetPipelineEvents(r.ID)
+				s.hub.Broadcast(sse.Event{
+					Type: "refinement:new",
+					Data: map[string]interface{}{
+						"refinement": r,
+						"events":     events,
+					},
+				})
 				if r.ID > lastRefinementID {
 					lastRefinementID = r.ID
 				}

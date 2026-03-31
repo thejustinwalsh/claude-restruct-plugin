@@ -21,12 +21,15 @@ export interface Refinement {
   project_path: string;
   raw_prompt: string;
   refined_prompt: string | null;
+  input_prompt: string | null;
+  llm_output: string | null;
   model: string;
   temperature: number;
   latency_ms: number;
   cache_hit: boolean;
   passthrough: boolean;
   output_valid: boolean | null;
+  status: string;
   created_at: string;
 }
 
@@ -34,7 +37,7 @@ export interface PipelineEvent {
   id: number;
   refinement_id: number;
   stage: string;
-  duration_ms: number;
+  duration_us: number;
   success: boolean;
   metadata: string;
   created_at: string;
@@ -56,6 +59,13 @@ export interface Health {
   metrics: Metrics;
 }
 
+export interface ServerInfo {
+  version: string;
+  mode: string;
+  db_path: string;
+  plugin_id: string;
+}
+
 export interface RefinementStat {
   id: number;
   created_at: string;
@@ -63,13 +73,14 @@ export interface RefinementStat {
   cache_hit: boolean;
   passthrough: boolean;
   model: string;
+  prompt_words: number;
 }
 
 export interface PipelineBreakdown {
   refinement_id: number;
   created_at: string;
   stage: string;
-  duration_ms: number;
+  duration_us: number;
 }
 
 export interface DailyCount {
@@ -90,7 +101,20 @@ export interface StatsData {
   sessions: SessionStat[];
 }
 
+export interface ActiveStream {
+  refinement_id: number;
+  session_id: string;
+  raw_prompt: string;
+  model: string;
+  text: string;
+  seq_end: number;
+  is_streaming: boolean;
+  error: string;
+  started_at: string;
+}
+
 export const api = {
+  info: () => fetchJSON<ServerInfo>('/info'),
   health: () => fetchJSON<Health>('/health'),
   metrics: () => fetchJSON<Metrics>('/metrics'),
   sessions: (limit = 50, offset = 0) =>
@@ -107,4 +131,6 @@ export const api = {
   refinementEvents: (id: number) =>
     fetchJSON<PipelineEvent[]>(`/refinements/${id}/events`),
   stats: (limit = 200) => fetchJSON<StatsData>(`/stats?limit=${limit}`),
+  streamBuffer: (id: number) => fetchJSON<ActiveStream>(`/stream/buffer/${id}`),
+  streamActive: () => fetchJSON<ActiveStream[]>('/stream/active'),
 };

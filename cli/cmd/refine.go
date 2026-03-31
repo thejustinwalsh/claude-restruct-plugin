@@ -15,6 +15,7 @@ import (
 	"github.com/tjw/restruct/internal/prompt"
 	"github.com/tjw/restruct/internal/session"
 	"github.com/tjw/restruct/internal/sink"
+	"github.com/tjw/restruct/internal/toggle"
 )
 
 var refineCmd = &cobra.Command{
@@ -41,6 +42,12 @@ are appended as additional context that guides Claude's behavior.`,
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "restruct: parse error: %v\n", err)
 			return nil
+		}
+
+		// Check if restruct is globally disabled
+		if !toggle.IsEnabled(db.DataDir()) {
+			slog.Debug("restruct disabled, passing through")
+			return hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
 		}
 
 		cfg, err := config.LoadFromViper()
@@ -92,10 +99,16 @@ are appended as additional context that guides Claude's behavior.`,
 			return hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
 		}
 
-		p, err := pipeline.New(cfg)
+		p, err := pipeline.New(cfg, cwd)
 		if err != nil {
 			slog.Warn("pipeline init error, passing through", "error", err)
 			return hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
+		}
+
+		// Attach session context provider so the local LLM can see
+		// recent conversation history (intents from prior refinements).
+		if database != nil && input.SessionID != "" {
+			p.SetSessionProvider(database, input.SessionID)
 		}
 
 		// Create pending refinement record before LLM call (needed for streaming ID)
@@ -110,10 +123,12 @@ are appended as additional context that guides Claude's behavior.`,
 			})
 		}
 
-		// Create streaming sink (best-effort, nil if server unavailable)
+		// Create streaming sink (best-effort, nil if server unavailable).
+		// All HTTP calls happen in a background goroutine — never blocks the hook.
 		serverURL := fmt.Sprintf("http://localhost:%s", cfg.Server.Port)
 		tokenSink := sink.NewHttpTokenSink(serverURL, refID, input.SessionID)
 		if tokenSink != nil {
+			defer tokenSink.Close() // ensure background sends complete before exit
 			tokenSink.Start(input.Prompt, cfg.Ollama.Model)
 		}
 
@@ -137,8 +152,18 @@ are appended as additional context that guides Claude's behavior.`,
 		// Complete the refinement record with final results
 		if recorder != nil && refID > 0 {
 			valid := true
+			inputPrompt := &result.InputPrompt
+			if *inputPrompt == "" {
+				inputPrompt = nil
+			}
+			var llmOutput *string
+			if result.LLMOutput != "" {
+				llmOutput = &result.LLMOutput
+			}
 			recorder.CompleteRefinement(refID, &db.Refinement{
 				RefinedPrompt: &result.Refined,
+				InputPrompt:   inputPrompt,
+				LLMOutput:     llmOutput,
 				Model:         cfg.Ollama.Model,
 				Temperature:   cfg.Refinement.Temperature,
 				LatencyMs:     result.TotalTime.Milliseconds(),
@@ -146,7 +171,7 @@ are appended as additional context that guides Claude's behavior.`,
 				OutputValid:   &valid,
 			})
 			for _, t := range result.Timings {
-				recorder.RecordPipelineEvent(refID, t.Stage, t.Duration.Milliseconds(), true, "")
+				recorder.RecordPipelineEvent(refID, t.Stage, t.Duration.Microseconds(), true, "")
 			}
 		}
 

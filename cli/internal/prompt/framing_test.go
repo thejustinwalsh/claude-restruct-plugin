@@ -33,13 +33,13 @@ func TestFrameContext(t *testing.T) {
 		},
 		{
 			name:  "valid XML output",
-			input: "<context_supplement>\n<intent>Fix the auth bug</intent>\n</context_supplement>",
-			want:  "context_supplement", // just check it's present
+			input: "<context>\n<intent>Fix the auth bug</intent>\n</context>",
+			want:  "context", // just check it's present
 		},
 		{
 			name:  "output with leading whitespace",
-			input: "\n  <context_supplement>\n<intent>Test</intent>\n</context_supplement>\n  ",
-			want:  "context_supplement",
+			input: "\n  <context>\n<intent>Test</intent>\n</context>\n  ",
+			want:  "context",
 		},
 	}
 
@@ -68,7 +68,7 @@ func TestFrameContext(t *testing.T) {
 }
 
 func TestFrameContext_NoPersonaLanguage(t *testing.T) {
-	output := "<context_supplement><intent>Test</intent></context_supplement>"
+	output := "<context><intent>Test</intent></context>"
 	framed := FrameContext(output)
 
 	forbidden := []string{

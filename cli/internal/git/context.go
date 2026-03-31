@@ -12,24 +12,22 @@ type ContextProvider struct {
 
 type Context struct {
 	Branch        string
-	RecentCommits []string
-	DiffStat      string
+	RecentCommits []string // oneline format: "hash message"
 }
 
 func NewContextProvider(repoDir string) *ContextProvider {
 	return &ContextProvider{RepoDir: repoDir}
 }
 
-// GetContext gathers branch, recent commits, and diff stat from the repo.
+// GetContext gathers branch and recent commit messages.
 // Returns an empty context (not an error) if not in a git repo.
 func (g *ContextProvider) GetContext() (*Context, error) {
-	ctx := &Context{}
-
 	branch, err := g.run("branch", "--show-current")
 	if err != nil {
-		return ctx, nil // Not a git repo, return empty
+		return &Context{}, nil
 	}
-	ctx.Branch = strings.TrimSpace(branch)
+
+	ctx := &Context{Branch: strings.TrimSpace(branch)}
 
 	log, err := g.run("log", "--oneline", "-5")
 	if err == nil {
@@ -40,14 +38,10 @@ func (g *ContextProvider) GetContext() (*Context, error) {
 		}
 	}
 
-	diff, err := g.run("diff", "--stat", "HEAD~1")
-	if err == nil {
-		ctx.DiffStat = strings.TrimSpace(diff)
-	}
-
 	return ctx, nil
 }
 
+// String formats the context for the local LLM's user message.
 func (c *Context) String() string {
 	if c.Branch == "" {
 		return ""
@@ -59,9 +53,6 @@ func (c *Context) String() string {
 		for _, c := range c.RecentCommits {
 			fmt.Fprintf(&b, "  %s\n", c)
 		}
-	}
-	if c.DiffStat != "" {
-		fmt.Fprintf(&b, "Recent changes:\n%s\n", c.DiffStat)
 	}
 	return b.String()
 }

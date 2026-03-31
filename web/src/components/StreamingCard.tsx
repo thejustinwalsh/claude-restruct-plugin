@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { StreamState } from '@/hooks/useSSE';
+import type { StreamState } from '@/store';
 import type { Refinement } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -68,20 +68,34 @@ export function StreamingCard({ stream, lastRefinement }: Props) {
     );
   }
 
-  // No active stream — show last completed refinement
-  if (lastRefinement?.refined_prompt) {
+  // No active stream — show last refinement
+  if (lastRefinement) {
+    const hasOutput = lastRefinement.refined_prompt != null;
     return (
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-lg">Last Refinement</CardTitle>
             <div className="flex gap-1.5">
+              {lastRefinement.status === 'pending' && (
+                <Badge variant="default" className="animate-pulse">
+                  pending
+                </Badge>
+              )}
+              {lastRefinement.status === 'failed' && (
+                <Badge variant="destructive">failed</Badge>
+              )}
+              {lastRefinement.passthrough && (
+                <Badge variant="outline">passthrough</Badge>
+              )}
               {lastRefinement.model && (
                 <Badge variant="secondary">{lastRefinement.model}</Badge>
               )}
-              <Badge variant="outline">
-                {(lastRefinement.latency_ms / 1000).toFixed(1)}s
-              </Badge>
+              {hasOutput && lastRefinement.latency_ms > 0 && (
+                <Badge variant="outline">
+                  {(lastRefinement.latency_ms / 1000).toFixed(1)}s
+                </Badge>
+              )}
             </div>
           </div>
           <p className="text-muted-foreground mt-1 truncate text-sm">
@@ -89,13 +103,39 @@ export function StreamingCard({ stream, lastRefinement }: Props) {
           </p>
         </CardHeader>
         <CardContent>
-          <pre className="bg-muted/50 max-h-[400px] overflow-y-auto rounded-md p-4 font-mono text-sm whitespace-pre-wrap">
-            <XmlHighlight code={lastRefinement.refined_prompt} />
-          </pre>
+          {hasOutput && lastRefinement.refined_prompt ? (
+            <pre className="bg-muted/50 max-h-[400px] overflow-y-auto rounded-md p-4 font-mono text-sm whitespace-pre-wrap">
+              <XmlHighlight code={lastRefinement.refined_prompt} />
+            </pre>
+          ) : lastRefinement.status === 'pending' ? (
+            <p className="text-muted-foreground text-sm italic">
+              Waiting for refinement to complete...
+            </p>
+          ) : lastRefinement.status === 'failed' ? (
+            <p className="text-destructive text-sm italic">Refinement failed</p>
+          ) : (
+            <p className="text-muted-foreground text-sm italic">
+              No additional context generated (passthrough)
+            </p>
+          )}
         </CardContent>
       </Card>
     );
   }
 
-  return null;
+  // Truly empty state — no refinements at all yet
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-muted-foreground text-lg">
+          No Refinements Yet
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-muted-foreground text-sm">
+          Send a prompt through Claude Code to see the first refinement here.
+        </p>
+      </CardContent>
+    </Card>
+  );
 }

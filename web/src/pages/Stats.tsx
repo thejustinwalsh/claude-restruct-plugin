@@ -1,7 +1,6 @@
-import { useApi } from '@/hooks/useApi';
-import { api } from '@/api/client';
+import { useEffect } from 'react';
+import { useStats, useActions } from '@/store';
 import type {
-  StatsData,
   RefinementStat,
   PipelineBreakdown,
   DailyCount,
@@ -20,6 +19,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Line,
   Scatter,
   ScatterChart,
   XAxis,
@@ -30,6 +30,7 @@ import {
 
 const latencyConfig: ChartConfig = {
   latency: { label: 'Latency (s)', color: 'var(--chart-1)' },
+  words: { label: 'Prompt Words', color: 'var(--chart-3)' },
 };
 
 function LatencyChart({ data }: { data: RefinementStat[] }) {
@@ -44,6 +45,7 @@ function LatencyChart({ data }: { data: RefinementStat[] }) {
         minute: '2-digit',
       }),
       latency: +(d.latency_ms / 1000).toFixed(1),
+      words: d.prompt_words,
     }));
 
   if (chartData.length === 0) return null;
@@ -51,7 +53,7 @@ function LatencyChart({ data }: { data: RefinementStat[] }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Latency Over Time</CardTitle>
+        <CardTitle className="text-base">Latency vs Prompt Length</CardTitle>
       </CardHeader>
       <CardContent>
         <ChartContainer config={latencyConfig} className="h-[350px] w-full">
@@ -62,15 +64,30 @@ function LatencyChart({ data }: { data: RefinementStat[] }) {
               tick={{ fontSize: 11 }}
               interval="preserveStartEnd"
             />
-            <YAxis tick={{ fontSize: 11 }} unit="s" />
+            <YAxis yAxisId="latency" tick={{ fontSize: 11 }} unit="s" />
+            <YAxis
+              yAxisId="words"
+              orientation="right"
+              tick={{ fontSize: 11 }}
+              unit="w"
+            />
             <ChartTooltip content={<ChartTooltipContent />} />
             <Area
+              yAxisId="latency"
               dataKey="latency"
               type="monotone"
               fill="var(--color-latency)"
               fillOpacity={0.3}
               stroke="var(--color-latency)"
               strokeWidth={2}
+            />
+            <Line
+              yAxisId="words"
+              dataKey="words"
+              type="monotone"
+              stroke="var(--color-words)"
+              strokeWidth={2}
+              dot={false}
             />
           </AreaChart>
         </ChartContainer>
@@ -190,7 +207,7 @@ function PipelineChart({ data }: { data: PipelineBreakdown[] }) {
       byRef.set(d.refinement_id, { created_at: d.created_at, stages: {} });
     }
     const row = byRef.get(d.refinement_id)!;
-    row.stages[d.stage] = +(d.duration_ms / 1000).toFixed(2);
+    row.stages[d.stage] = +(d.duration_us / 1_000_000).toFixed(3);
     allStages.add(d.stage);
   }
 
@@ -337,9 +354,14 @@ function SessionScatterChart({ data }: { data: SessionStat[] }) {
 // -- Stats page --
 
 export function Stats() {
-  const { data, loading } = useApi<StatsData>(() => api.stats(), []);
+  const data = useStats();
+  const { fetchStats } = useActions();
 
-  if (loading || !data) {
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
+
+  if (!data) {
     return (
       <div className="flex items-center justify-center py-20">
         <p className="text-muted-foreground text-sm">Loading stats...</p>

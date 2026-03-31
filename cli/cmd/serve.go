@@ -47,7 +47,7 @@ var serveCmd = &cobra.Command{
 		defer database.Close()
 
 		// Create server — WebDist() returns nil in debug builds (proxies to Vite)
-		srv := server.New(database, port, dev, server.WebDist())
+		srv := server.New(database, port, dev, server.WebDist(), Version)
 
 		// Handle shutdown
 		ctx, cancel := context.WithCancel(context.Background())

@@ -18,14 +18,14 @@ order: 800
 |---|-----------|--------|------------|---------|
 | M1 | [Hook Protocol & Claude Code Integration](M1-HOOK-PROTOCOL.md) | **Done** | — | Verify and fix the hook contract; document session_id, transcript_path, and hook I/O schema |
 | M2 | [Core Pipeline Hardening](M2-CORE-PIPELINE.md) | **Done** | M1 | Production-ready pipeline: error handling, timeouts, streaming Ollama, graceful degradation |
-| M3 | [Prompt Engineering & Output Format](M3-PROMPT-ENGINE.md) | **Done** | M2 | System prompt v2 (supplementary context, RE2 restatement, no persona), passthrough detection, injection framing, token budget, versioned prompts, configurable template |
-| M4 | [Server & Dashboard](M4-SERVER-DASHBOARD.md) | **Done** | M1, M2 | Chi server, React SPA, SQLite data layer, SSE hub, daemon management, streaming pipeline all implemented |
-| M5 | [Rules Engine & Context Gathering](M5-RULES-ENGINE.md) | **~30% Done** | M2 | Rules loader with hierarchical search implemented. Needs LLM filtering, git context, conversation-aware |
-| M6 | [Caching & Performance](M6-CACHE-PERF.md) | **~30% Done** | M2, M4 | File-based cache with SHA256 keys implemented. Needs SQLite migration, TTL, LRU eviction |
+| M3 | [Prompt Engineering & Output Format](M3-PROMPT-ENGINE.md) | **Done** | M2 | v4: LLM outputs JSON classification, Go composes XML via compose.go. Dynamic footer, type-gated guardrails, LLM-aware of downstream effects. Passthrough detection, versioned prompts |
+| M4 | [Server & Dashboard](M4-SERVER-DASHBOARD.md) | **Done** | M1, M2 | Chi server, React SPA (wouter routing), SQLite data layer, SSE hub, streaming pipeline, /api/info endpoint, 4-panel refinement detail, `input_prompt` + `llm_output` DB columns |
+| M5 | [Rules Engine & Context Gathering](M5-RULES-ENGINE.md) | **~60% Done** | M2 | Rules loader walks to git root, LLM selects rules by index, "After Every Change" = process guardrails, git stripped to branch+commits, LLM generates recent_activity summary, session clips from DB. Needs file mention detection |
+| M6 | [Caching & Performance](M6-CACHE-PERF.md) | **~40% Done** | M2, M4 | File-based cache, SHA256(prompt+rulesHash). Needs SQLite migration, TTL, LRU eviction |
 | M7 | [CLI UX & Configuration](M7-CLI-UX.md) | **~70% Done** | M2 | Doctor, model, config commands implemented. Needs auto-fix, error polish, completions, version check |
 | M8 | [Plugin Distribution & Installation](M8-PLUGIN-DIST.md) | **~60% Done** | M1, M7 | Plugin manifest, skills, cross-platform builds done. Needs install flow, uninstall, release automation |
-| M8.1 | [Build System (Make → xmake)](M8.1-BUILD-SYSTEM.md) | **Done** | — | xmake + pnpm workspaces, incremental builds, cross-compilation, debug/release modes |
-| M9 | [Testing & Calibration](M9-TESTING.md) | **~40% Done** | M3, M4 | 96 tests across 9 packages (M1, M2, M3, M4 covered). Needs integration tests, eval framework, >80% coverage |
+| M8.1 | [Build System (Make → xmake)](M8.1-BUILD-SYSTEM.md) | **Done** | — | xmake + pnpm workspaces, debug/release modes, `pnpm build` respects config, `pnpm release` for explicit release |
+| M9 | [Testing & Calibration](M9-TESTING.md) | **~50% Done** | M3, M4 | 213 tests across 13 packages. Integration tests use real CLAUDE.md + git. Needs eval framework, >80% coverage |
 | M10 | [Self-Improvement Loop](M10-SELF-IMPROVE.md) | Not Started | M4, M9 | Dashboard-driven feedback loop: rating analysis, system prompt refinement, rules suggestions |
 
 ---
@@ -67,9 +67,9 @@ order: 800
 
 | Task | Status | Notes |
 |------|--------|-------|
-| 3.1 — Injection framing | ✅ Done | `prompt/framing.go` — one-line preamble + `<context_supplement>` block. Handles `NO_ADDITIONAL_CONTEXT` sentinel |
-| 3.2 — System prompt optimization | ✅ Done | v2 rewrite: no persona, supplementary context model, RE2 intent restatement, workflow section, few-shot examples. Versioned at `versions/v2_supplement.tmpl` |
-| 3.3 — Context builder optimization | ✅ Done | `prompt/builder.go` — conditional sections (omit empty), token budget with truncation priority (git → rules → never prompt) |
+| 3.1 — Injection framing | ✅ Done | `prompt/framing.go` — preamble header. Dynamic footer built by `compose.go` — only references sections present in output |
+| 3.2 — System prompt optimization | ✅ Done | v4: LLM outputs JSON (type, intent, recent_activity, analysis, relevant_rules[int], relevant_anti_patterns[int], clarification). Prompt explains downstream consequences. Versioned at `versions/v4_classify.tmpl` |
+| 3.3 — Context builder optimization | ✅ Done | `builder.go` ParseRules → numbered context rules + anti-patterns + process guardrails. `compose.go` assembles XML from LLM JSON + static data. Rules priority in budget: rules > session > git |
 | 3.4 — Prompt template as configurable asset | ✅ Done | Search path: `.restruct/system_prompt.tmpl` → `~/.config/restruct/system_prompt.tmpl` → embedded default. Version history in `versions/` |
 | 3.5 — Passthrough detection | ✅ Done | `pipeline/passthrough.go` — heuristic detection: affirmatives, follow-ups, numbered selections, slash commands. 64 test cases |
 | 3.6 — Refinement quality smoke tests | ✅ Done | 32 tests across pipeline + prompt packages (passthrough, framing, builder, template, validation, NoContext sentinel) |
@@ -87,22 +87,22 @@ order: 800
 | 4.7 — Streaming Ollama integration | ✅ Done | `ChatStream()` → `HttpTokenSink` → POST to server → SSE hub → browser `useStreamingTokens` hook → `StreamingCard`. Full chain wired |
 | 4.8 — SSE live updates (DB polling) | ✅ Done | `sse/hub.go`: pub-sub pattern, 1s DB poll, `refinement:new` broadcasts to all connected clients |
 
-### M5: Rules Engine & Context Gathering (~30% Done)
+### M5: Rules Engine & Context Gathering (~60% Done)
 
 | Task | Status | Notes |
 |------|--------|-------|
-| 5.1 — Hierarchical rules loading | ✅ Done | `internal/rules/loader.go`: configurable search paths, file concatenation, SHA256 hash for cache keying |
-| 5.2 — Rules relevance filtering (LLM-assisted) | ❌ | Local LLM selects relevant sections, not keyword matching |
-| 5.3 — Smart git context | ⚠️ Partial | `internal/git/context.go` exists. Needs changed files, file-prompt correlation, branch parsing |
-| 5.4 — Conversation-aware refinement | ❌ | Transcript parsing, session memory, follow-up detection |
+| 5.1 — Hierarchical rules loading | ✅ Done | `rules/loader.go`: walks up directory tree to git root. Finds CLAUDE.md even when hook cwd is a subdirectory |
+| 5.2 — Rules relevance filtering (LLM-assisted) | ✅ Done | LLM selects rules by numbered index. All rules (except "After Every Change") presented as numbered context list. Anti-patterns in separate numbered list. LLM's system prompt explains consequences of empty selection |
+| 5.3 — Smart git context | ✅ Done | Stripped to branch + 5 commit messages only. LLM generates `recent_activity` summary from commits, flagging breaking changes from conventional commit syntax. No file lists |
+| 5.4 — Conversation-aware refinement | ⚠️ Partial | Session clip extraction from DB (`GetRecentIntents()`), intent parsing from refined prompts. Transcript parsing still needed |
 | 5.5 — File mention detection | ❌ | Extract context for mentioned files |
-| 5.6 — Rules loader tests | ❌ | >80% coverage |
+| 5.6 — Rules loader tests | ⚠️ Partial | Integration tests use real CLAUDE.md + git. Walk-up-to-root tested. Needs >80% coverage |
 
-### M6: Caching & Performance (~30% Done)
+### M6: Caching & Performance (~40% Done)
 
 | Task | Status | Notes |
 |------|--------|-------|
-| 6.1 — Cache key improvements | ⚠️ Partial | SHA256(prompt + rules_hash) implemented in `internal/cache/store.go`. Needs normalization, model-scoping |
+| 6.1 — Cache key improvements | ⚠️ Partial | SHA256(prompt + rulesHash). Git state removed from key (LLM summary varies anyway). Session context excluded. Needs normalization, model-scoping |
 | 6.2 — Cache expiration & eviction | ❌ | TTL, LRU, rules invalidation |
 | 6.3 — Cache storage (SQLite) | ❌ | Still file-based JSON. Needs migration to shared `internal/db` cache table |
 | 6.4 — Model preloading | ✅ Done | SessionStart hook calls `restruct model load` with keep_alive. Wired in `plugin.json` |
@@ -131,11 +131,11 @@ order: 800
 | 8.5 — Uninstall & cleanup | ❌ | `restruct uninstall` |
 | 8.6 — Plugin release automation | ❌ | Changelog, version bumping, CI commits binaries |
 
-### M9: Testing & Calibration (~40% Done)
+### M9: Testing & Calibration (~45% Done)
 
 | Task | Status | Notes |
 |------|--------|-------|
-| 9.1 — Unit test coverage | ⚠️ Partial | 96 tests across 9 packages: pipeline (14 + 64 passthrough), prompt (20), db (22), server (18), sse (6), sink (8), protocol (7), install (3), session (4), cache (2). Needs >80% across all packages |
+| 9.1 — Unit test coverage | ⚠️ Partial | 213 tests across 13 packages. Integration tests exercise real CLAUDE.md, real git, full compose pipeline. Compose tests verify type-gated sections, index resolution, dynamic footer. Needs >80% across all packages |
 | 9.2 — Integration test suite | ❌ | Mock Ollama server, end-to-end binary tests |
 | 9.3 — Prompt quality evaluation framework | ❌ | `restruct eval` command, structural + LLM-as-judge |
 | 9.4 — Evaluation corpus creation | ❌ | 30+ test prompts with quality criteria |
@@ -187,10 +187,30 @@ These were previously open and have been resolved during implementation:
 
 | Decision | Resolution | Resolved In |
 |----------|-----------|-------------|
-| Injection framing text | One-line preamble: `[Project rules analysis for the request above. Follow these constraints during implementation.]` + `<context_supplement>` XML block | M3 implementation |
-| System prompt rewrite | Full rewrite to supplementary-context model. No persona, professional tone, RE2 intent restatement, scaled depth with `NO_ADDITIONAL_CONTEXT` sentinel. Versioned at `versions/v2_supplement.tmpl` | M3 implementation |
+| Injection framing text | One-line preamble: `[Project rules analysis for the request above. Follow these constraints during implementation.]` + `<context>` XML block (renamed from `<context_supplement>` for stronger signal) | M3 implementation |
+| System prompt rewrite | v3: renamed tags (`<context>`, `<analysis>`, `<clarification_needed>`), post-process constraint injection, plan-mode behavioral directives. Versioned at `versions/v3_considerations.tmpl` | M3 v3 update |
 | Workflow section | Retained. ReAct research supports it (+34% on ALFWorld). Recency bias requires re-injection to counteract drift. Kept concise: 4-step Investigate → Plan → Implement → Verify | M3 implementation |
 | RE2 re-reading | Applied. Local LLM generates `<intent>` section restating request in precise terms. Claude reads casual prompt (pass 1), then precise restatement alongside rules (pass 2). Xu et al. EMNLP 2024: +2-5 pts across reasoning benchmarks | M3 implementation |
+| XML tag naming | No tag names carry special weight in Claude — compliance comes from content, not tag names. Renamed for clarity: `<context_supplement>` → `<context>`, `<considerations>` → `<analysis>`, `<ambiguities>` → `<clarification_needed>`. Based on Anthropic docs research | M3 v3 update |
+| Post-process constraints | System-level directives (plan mode, sub-agent delegation) injected after LLM output via `appendConstraints()`, not baked into the local LLM's system prompt. Keeps local LLM focused; avoids prompt leakage | M3 v3 + M5 update |
+| Plan mode is a permission mode | Claude Code plan mode is a harness-level permission setting, not a prompt trigger. No magic keywords exist. Used behavioral instruction ("present a plan and wait for approval") instead | M3 v3 update |
+| Cache key includes git state | `buildCacheKey()` includes staged + working diff stats. Same prompt with different edits = different cache entry. Session context excluded (doesn't affect structural output) | M5/M6 update |
+| Session context via DB | Recent refinement intents queried from SQLite, formatted as session clips ("2m ago: Fixed auth..."). Avoids transcript parsing overhead. Capped at 400 chars | M5 update |
+| Git calls parallelized | 5 concurrent goroutines (branch, log, HEAD~1 stat, staged stat, working stat) instead of 3 sequential calls. ~50% faster git context gathering | M5 update |
+| v4 JSON classification | LLM outputs JSON (not XML). Go composes final XML via `compose.go`. LLM tokens drop ~70% — only produces classification + analysis, not formatting | M3 v4 rewrite |
+| LLM-selected rules by index | All rules (except "After Every Change") presented as numbered list. LLM selects by index. Empty selection = Claude gets no rules. System prompt explains consequences | M3/M5 v4 |
+| Process guardrails | Only "## After Every Change" items are always injected (in `<constraints>`). All other rules are LLM-selected context. Build commands, code style, architecture = context rules | M5 v4 |
+| Git context stripped | Removed file lists (staged, working, HEAD~1 stat). LLM only sees branch + commit messages. Produces `recent_activity` one-line summary from conventional commits | M5 v4 |
+| LLM knows its downstream effects | System prompt explains: type controls guardrails, empty rules = no rules for Claude, clarification triggers MUST-ask, analysis is Claude's only window into git/session | M3 v4 |
+| Dynamic footer | Footer only references XML sections actually present. Questions don't get told about `<constraints>`. Built by `compose.go:buildFooter()` | M3 v4 |
+| Anti-patterns ungated | Available for all request types, not just implementation. LLM can select anti-patterns for questions too | M3 v4 |
+| `input_prompt` + `llm_output` columns | DB stores full LLM input (system + user message) and raw LLM response. Migrations 003, 004. Visible in web 4-panel detail view | M4 v4 |
+| `/api/info` endpoint | Returns version, build mode (debug/release), DB path, plugin ID. Shown in web footer | M4 v4 |
+| wouter routing | Web SPA uses wouter for URL-based navigation. Browser back/forward works. Routes: /, /sessions, /sessions/:id, /refinements/:id, /stats | M4 v4 |
+| xmake release group fix | Release group targets now respect `is_mode("debug")` tag. `pnpm build` no longer reconfigures to release. `pnpm release` is new command for explicit release builds | M8.1 v4 |
+| Rules loader walks to git root | `rules/loader.go` searches from cwd up to git root for CLAUDE.md. Fixes bug where hook cwd in subdirectory missed project rules | M5 v4 |
+| `repo_state` in Claude output | `<repo_state>Branch: main | LLM activity summary</repo_state>`. Branch is static, activity is LLM-generated from commit messages | M3/M5 v4 |
+| compose.go extraction | Context composition logic extracted from pipeline.go. Single file for `composeContext()`, `buildFooter()`, `needsImplementationGuardrails()` | M3 v4 |
 
 ---
 
@@ -200,21 +220,21 @@ These were previously open and have been resolved during implementation:
 M1  (Hook Protocol)        ██████████  Done
  │
  ├── M2  (Core Pipeline)   ██████████  Done
- │    ├── M3  (Prompt Engine)    ██████████  Done
- │    ├── M4  (Server)           ██████████  Done
- │    ├── M5  (Rules Engine)     ███░░░░░░░  ~30%
- │    ├── M6  (Cache & Perf)     ███░░░░░░░  ~30%
+ │    ├── M3  (Prompt Engine)    ██████████  Done (v4 JSON)
+ │    ├── M4  (Server)           ██████████  Done (4-panel, /api/info)
+ │    ├── M5  (Rules Engine)     ██████░░░░  ~60%
+ │    ├── M6  (Cache & Perf)     ████░░░░░░  ~40%
  │    └── M7  (CLI UX)           ███████░░░  ~70%
  │                                    │
  │                                    └──► M8  (Plugin Dist)  ██████░░░░  ~60%
  │
  └── M8.1 (Build System)   ██████████  Done
 
- M3 + M4 ──► M9  (Testing)      ████░░░░░░  ~40%
+ M3 + M4 ──► M9  (Testing)      █████░░░░░  ~50%
               └──► M10 (Self-Improve)  ░░░░░░░░░░
 ```
 
-**M1, M2, and M8.1 are complete.** M4 is nearly done (only streaming Ollama → SSE remaining). M3, M5, M6 need their advanced features (LLM-assisted filtering, passthrough detection, cache migration). M7 needs polish (auto-fix, completions). M9 needs major expansion from 26 tests to full coverage.
+**M1–M4 and M8.1 are complete.** Major session changes: v4 JSON classification pipeline (M3), LLM-selected rules by index (M5), git stripped to branch+commits with LLM activity summary (M5), 4-panel web detail view with `input_prompt`/`llm_output` (M4), wouter routing (M4), compose.go extraction, dynamic footer, xmake build mode fix. M5 needs file mention detection. M6 needs SQLite cache migration. M9 at 213 tests with real-data integration tests.
 
 ---
 

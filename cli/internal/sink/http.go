@@ -5,14 +5,14 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// HttpTokenSink implements ollama.TokenSink by POSTing token batches
-// to the restruct server for live SSE streaming to the dashboard.
-// All operations are best-effort — failures are logged and ignored.
+// HttpTokenSink implements ollama.TokenSink by buffering tokens and
+// sending them to the restruct server via a background goroutine.
+// The LLM stream is never blocked by HTTP calls — tokens are written
+// to a channel and drained asynchronously.
 type HttpTokenSink struct {
 	baseURL      string
 	refinementID int64
@@ -20,18 +20,36 @@ type HttpTokenSink struct {
 	client       *http.Client
 	disabled     atomic.Bool
 
-	// Batching: accumulate tokens and flush periodically
-	mu       sync.Mutex
+	// Async send queue — all HTTP POSTs go through here
+	sendCh chan sendMsg
+	done   chan struct{} // closed when background goroutine exits
+
+	// Batching state (only accessed by the drain goroutine)
 	buf      bytes.Buffer
 	seqStart int
 	seqEnd   int
 	timer    *time.Timer
 }
 
+type sendMsg struct {
+	path    string
+	payload interface{}
+}
+
+// sentinel payloads for control messages
+type tokenMsg struct {
+	content string
+}
+type doneMsg struct{}
+type errorMsg struct {
+	err error
+}
+
 const (
 	batchWindow  = 50 * time.Millisecond
 	batchMaxSize = 20
 	httpTimeout  = 2 * time.Second
+	sendQueueCap = 256
 )
 
 // NewHttpTokenSink creates a sink that streams tokens to the server.
@@ -40,12 +58,16 @@ func NewHttpTokenSink(serverURL string, refinementID int64, sessionID string) *H
 	if serverURL == "" {
 		return nil
 	}
-	return &HttpTokenSink{
+	s := &HttpTokenSink{
 		baseURL:      serverURL,
 		refinementID: refinementID,
 		sessionID:    sessionID,
 		client:       &http.Client{Timeout: httpTimeout},
+		sendCh:       make(chan sendMsg, sendQueueCap),
+		done:         make(chan struct{}),
 	}
+	go s.drain()
+	return s
 }
 
 // Start notifies the server that a new refinement stream is beginning.
@@ -53,7 +75,7 @@ func (s *HttpTokenSink) Start(rawPrompt, model string) {
 	if s == nil {
 		return
 	}
-	s.post("/api/stream/start", map[string]interface{}{
+	s.enqueue("/api/stream/start", map[string]interface{}{
 		"refinement_id": s.refinementID,
 		"session_id":    s.sessionID,
 		"raw_prompt":    rawPrompt,
@@ -62,31 +84,16 @@ func (s *HttpTokenSink) Start(rawPrompt, model string) {
 }
 
 // OnToken receives a single token from the Ollama stream.
+// Never blocks — writes to the send channel for async batching.
 func (s *HttpTokenSink) OnToken(content string) {
 	if s == nil || s.disabled.Load() {
 		return
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.buf.Len() == 0 {
-		s.seqStart = s.seqEnd
-	}
-	s.buf.WriteString(content)
-	s.seqEnd++
-
-	if s.seqEnd-s.seqStart >= batchMaxSize {
-		s.flushLocked()
-		return
-	}
-
-	if s.timer == nil {
-		s.timer = time.AfterFunc(batchWindow, func() {
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			s.flushLocked()
-		})
+	// Non-blocking send; drop tokens if queue is full rather than blocking LLM
+	select {
+	case s.sendCh <- sendMsg{path: "token", payload: tokenMsg{content: content}}:
+	default:
+		slog.Debug("stream sink: send queue full, dropping token")
 	}
 }
 
@@ -95,15 +102,10 @@ func (s *HttpTokenSink) OnDone() {
 	if s == nil || s.disabled.Load() {
 		return
 	}
-
-	// Flush any remaining tokens
-	s.mu.Lock()
-	s.flushLocked()
-	s.mu.Unlock()
-
-	s.post("/api/stream/done", map[string]interface{}{
-		"refinement_id": s.refinementID,
-	})
+	select {
+	case s.sendCh <- sendMsg{path: "done", payload: doneMsg{}}:
+	default:
+	}
 }
 
 // OnError signals a stream error.
@@ -111,14 +113,88 @@ func (s *HttpTokenSink) OnError(err error) {
 	if s == nil || s.disabled.Load() {
 		return
 	}
-
-	s.post("/api/stream/error", map[string]interface{}{
-		"refinement_id": s.refinementID,
-		"error":         err.Error(),
-	})
+	select {
+	case s.sendCh <- sendMsg{path: "error", payload: errorMsg{err: err}}:
+	default:
+	}
 }
 
-func (s *HttpTokenSink) flushLocked() {
+// Close waits for the background goroutine to finish sending queued
+// messages. Call after OnDone/OnError to ensure delivery. Safe to skip
+// if you don't need delivery guarantees.
+func (s *HttpTokenSink) Close() {
+	if s == nil {
+		return
+	}
+	close(s.sendCh)
+	<-s.done
+}
+
+// drain runs in a background goroutine, processing all send messages.
+// Tokens are batched; control messages (start/done/error) are sent immediately.
+func (s *HttpTokenSink) drain() {
+	defer close(s.done)
+
+	for msg := range s.sendCh {
+		if s.disabled.Load() {
+			continue
+		}
+
+		switch v := msg.payload.(type) {
+		case tokenMsg:
+			s.bufferToken(v.content)
+		case doneMsg:
+			s.flushBatch()
+			s.post("/api/stream/done", map[string]interface{}{
+				"refinement_id": s.refinementID,
+			})
+		case errorMsg:
+			s.flushBatch()
+			s.post("/api/stream/error", map[string]interface{}{
+				"refinement_id": s.refinementID,
+				"error":         v.err.Error(),
+			})
+		default:
+			if msg.path == "flush" {
+				s.flushBatch()
+			} else {
+				// Direct send (e.g., stream/start)
+				s.post(msg.path, msg.payload)
+			}
+		}
+	}
+
+	// Channel closed — flush anything remaining
+	if s.timer != nil {
+		s.timer.Stop()
+	}
+	s.flushBatch()
+}
+
+func (s *HttpTokenSink) bufferToken(content string) {
+	if s.buf.Len() == 0 {
+		s.seqStart = s.seqEnd
+	}
+	s.buf.WriteString(content)
+	s.seqEnd++
+
+	if s.seqEnd-s.seqStart >= batchMaxSize {
+		s.flushBatch()
+		return
+	}
+
+	if s.timer == nil {
+		s.timer = time.AfterFunc(batchWindow, func() {
+			// Timer fired — send a flush signal through the channel
+			select {
+			case s.sendCh <- sendMsg{path: "flush"}:
+			default:
+			}
+		})
+	}
+}
+
+func (s *HttpTokenSink) flushBatch() {
 	if s.buf.Len() == 0 {
 		return
 	}
@@ -127,19 +203,22 @@ func (s *HttpTokenSink) flushLocked() {
 		s.timer = nil
 	}
 
-	tokens := s.buf.String()
-	seqStart := s.seqStart
-	seqEnd := s.seqEnd
+	s.post("/api/stream/token", map[string]interface{}{
+		"refinement_id": s.refinementID,
+		"tokens":        s.buf.String(),
+		"seq_start":     s.seqStart,
+		"seq_end":       s.seqEnd,
+	})
 	s.buf.Reset()
 	s.seqStart = s.seqEnd
+}
 
-	// Send in background to avoid blocking the LLM stream
-	go s.post("/api/stream/token", map[string]interface{}{
-		"refinement_id": s.refinementID,
-		"tokens":        tokens,
-		"seq_start":     seqStart,
-		"seq_end":       seqEnd,
-	})
+func (s *HttpTokenSink) enqueue(path string, payload interface{}) {
+	select {
+	case s.sendCh <- sendMsg{path: path, payload: payload}:
+	default:
+		slog.Debug("stream sink: send queue full, dropping message", "path", path)
+	}
 }
 
 func (s *HttpTokenSink) post(path string, payload interface{}) {
@@ -152,11 +231,18 @@ func (s *HttpTokenSink) post(path string, payload interface{}) {
 		return
 	}
 
-	resp, err := s.client.Post(s.baseURL+path, "application/json", bytes.NewReader(body))
-	if err != nil {
-		slog.Debug("stream sink: server unavailable, disabling", "error", err)
-		s.disabled.Store(true)
+	for attempt := 0; attempt < 3; attempt++ {
+		resp, err := s.client.Post(s.baseURL+path, "application/json", bytes.NewReader(body))
+		if err != nil {
+			if attempt < 2 {
+				time.Sleep(time.Duration(50*(attempt+1)) * time.Millisecond)
+				continue
+			}
+			slog.Debug("stream sink: server unavailable after retries, disabling", "error", err)
+			s.disabled.Store(true)
+			return
+		}
+		resp.Body.Close()
 		return
 	}
-	resp.Body.Close()
 }

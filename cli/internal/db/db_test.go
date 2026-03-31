@@ -373,7 +373,7 @@ func TestInsertAndGetPipelineEvents(t *testing.T) {
 		d.InsertPipelineEvent(&PipelineEvent{
 			RefinementID: refID,
 			Stage:        stage,
-			DurationMs:   int64((i + 1) * 100),
+			DurationUs:   int64((i + 1) * 100000),
 			Success:      true,
 		})
 	}
@@ -476,6 +476,66 @@ func TestGetDailyCounts(t *testing.T) {
 	}
 	if counts[0].Count != 2 {
 		t.Errorf("today's count = %d, want 2", counts[0].Count)
+	}
+}
+
+// --- FailStalePending ---
+
+func TestFailStalePending(t *testing.T) {
+	d := testDB(t)
+
+	// Create a session for FK constraint
+	d.UpsertSession(&Session{ID: "s1", ProjectPath: "/p", Status: "active"})
+
+	// Insert a refinement that will look "old" (pending, created 10 min ago)
+	_, err := d.Pool().Exec(
+		`INSERT INTO refinements (session_id, project_path, raw_prompt, model, status, created_at)
+		 VALUES ('s1', '/p', 'old pending', 'model', 'pending', datetime('now', '-10 minutes'))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert a recent pending refinement (should NOT be pruned)
+	_, err = d.Pool().Exec(
+		`INSERT INTO refinements (session_id, project_path, raw_prompt, model, status, created_at)
+		 VALUES ('s1', '/p', 'fresh pending', 'model', 'pending', datetime('now'))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert a completed refinement (should NOT be touched)
+	_, err = d.Pool().Exec(
+		`INSERT INTO refinements (session_id, project_path, raw_prompt, model, status, created_at)
+		 VALUES ('s1', '/p', 'done', 'model', 'complete', datetime('now', '-10 minutes'))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := d.FailStalePending(5 * time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 pruned, got %d", n)
+	}
+
+	// Verify the old one is now failed
+	var status string
+	d.Pool().QueryRow("SELECT status FROM refinements WHERE raw_prompt = 'old pending'").Scan(&status)
+	if status != "failed" {
+		t.Errorf("old pending should be 'failed', got %q", status)
+	}
+
+	// Verify the fresh one is still pending
+	d.Pool().QueryRow("SELECT status FROM refinements WHERE raw_prompt = 'fresh pending'").Scan(&status)
+	if status != "pending" {
+		t.Errorf("fresh pending should still be 'pending', got %q", status)
+	}
+
+	// Verify the complete one is unchanged
+	d.Pool().QueryRow("SELECT status FROM refinements WHERE raw_prompt = 'done'").Scan(&status)
+	if status != "complete" {
+		t.Errorf("complete should still be 'complete', got %q", status)
 	}
 }
 

@@ -67,8 +67,14 @@ func (h *Hub) ClientCount() int {
 	return len(h.clients)
 }
 
-// ServeHTTP handles SSE connections.
+// ServeHTTP handles SSE connections with no init events.
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.ServeHTTPWithInit(w, r, nil)
+}
+
+// ServeHTTPWithInit handles SSE connections, sending initEvents immediately
+// after the "connected" event so new clients can catch up on active state.
+func (h *Hub) ServeHTTPWithInit(w http.ResponseWriter, r *http.Request, initEvents []Event) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
@@ -85,6 +91,18 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Send initial connection event
 	fmt.Fprintf(w, "event: connected\ndata: {\"clients\":%d}\n\n", h.ClientCount())
 	flusher.Flush()
+
+	// Replay init events for catch-up
+	for _, evt := range initEvents {
+		data, err := json.Marshal(evt.Data)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Type, data)
+	}
+	if len(initEvents) > 0 {
+		flusher.Flush()
+	}
 
 	for {
 		select {

@@ -62,14 +62,14 @@ func (r *Recorder) CompleteRefinement(id int64, ref *Refinement) {
 }
 
 // RecordPipelineEvent writes a pipeline stage timing record.
-func (r *Recorder) RecordPipelineEvent(refinementID int64, stage string, durationMs int64, success bool, metadata string) {
+func (r *Recorder) RecordPipelineEvent(refinementID int64, stage string, durationUs int64, success bool, metadata string) {
 	if refinementID == 0 {
 		return
 	}
 	err := r.db.InsertPipelineEvent(&PipelineEvent{
 		RefinementID: refinementID,
 		Stage:        stage,
-		DurationMs:   durationMs,
+		DurationUs:   durationUs,
 		Success:      success,
 		Metadata:     metadata,
 	})
