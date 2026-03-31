@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // Event represents a server-sent event.
@@ -104,10 +105,19 @@ func (h *Hub) ServeHTTPWithInit(w http.ResponseWriter, r *http.Request, initEven
 		flusher.Flush()
 	}
 
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-heartbeat.C:
+			// Keep connection alive through proxies and detect stale clients.
+			// Comments (: prefix) are consumed by EventSource but don't fire JS events,
+			// so we send an actual event for client-side staleness detection.
+			fmt.Fprintf(w, ": keepalive\nevent: heartbeat\ndata: {}\n\n")
+			flusher.Flush()
 		case evt := <-ch:
 			data, err := json.Marshal(evt.Data)
 			if err != nil {

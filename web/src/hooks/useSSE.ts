@@ -47,19 +47,26 @@ export type SSEEvent =
 // ---------------------------------------------------------------------------
 // Singleton SSE connection — shared across all hooks, never closed while
 // the app is mounted. Reconnects with exponential backoff on failure.
+// Heartbeat detection forces reconnect if the server stops sending events.
 // ---------------------------------------------------------------------------
 
 type Listener = (evt: SSEEvent) => void;
+type ReconnectListener = () => void;
 
 const listeners = new Set<Listener>();
 const connectedListeners = new Set<() => void>();
+const reconnectListeners = new Set<ReconnectListener>();
 let eventSource: EventSource | null = null;
 let sseConnected = false;
 let retryTimeout: ReturnType<typeof setTimeout> | null = null;
 let retryCount = 0;
+let lastEventTime = 0;
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 30000;
+const HEARTBEAT_TIMEOUT_MS = 45_000; // Force reconnect if no event for 45s
+const HEARTBEAT_CHECK_MS = 10_000; // Check staleness every 10s
 
 function setConnected(value: boolean) {
   if (sseConnected === value) return;
@@ -69,6 +76,29 @@ function setConnected(value: boolean) {
 
 function dispatch(evt: SSEEvent) {
   for (const fn of listeners) fn(evt);
+}
+
+function notifyReconnect() {
+  for (const fn of reconnectListeners) fn();
+}
+
+function startHeartbeatCheck() {
+  if (heartbeatInterval) return;
+  heartbeatInterval = setInterval(() => {
+    if (
+      sseConnected &&
+      lastEventTime > 0 &&
+      Date.now() - lastEventTime > HEARTBEAT_TIMEOUT_MS
+    ) {
+      // Connection appears stale — force reconnect
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+      setConnected(false);
+      connect();
+    }
+  }, HEARTBEAT_CHECK_MS);
 }
 
 function connect() {
@@ -86,6 +116,7 @@ function connect() {
 
   const listen = (type: string) => {
     es.addEventListener(type, (e) => {
+      lastEventTime = Date.now();
       dispatch({
         type,
         data: JSON.parse((e as MessageEvent).data),
@@ -94,9 +125,23 @@ function connect() {
   };
 
   es.addEventListener('connected', (e) => {
+    const wasConnected = sseConnected;
     retryCount = 0;
+    lastEventTime = Date.now();
     setConnected(true);
     dispatch({ type: 'connected', data: JSON.parse((e as MessageEvent).data) });
+    // Notify reconnect listeners so the store can refresh data.
+    // Skip the very first connection (page load) — initStore handles that.
+    // wasConnected is true only if we were previously connected, meaning this
+    // is a reconnect after a drop, not the initial page-load connection.
+    if (wasConnected) {
+      notifyReconnect();
+    }
+  });
+
+  // Track heartbeat events for staleness detection (server sends every 15s)
+  es.addEventListener('heartbeat', () => {
+    lastEventTime = Date.now();
   });
 
   listen('refinement:new');
@@ -118,6 +163,8 @@ function connect() {
     retryCount++;
     retryTimeout = setTimeout(connect, delay);
   };
+
+  startHeartbeatCheck();
 }
 
 function ensureConnection() {
@@ -150,6 +197,36 @@ export function subscribeConnected(
   return () => {
     connectedListeners.delete(wrapped);
   };
+}
+
+/** Subscribe to reconnect events. Fires after the SSE reconnects. */
+export function subscribeReconnect(fn: ReconnectListener): () => void {
+  reconnectListeners.add(fn);
+  return () => {
+    reconnectListeners.delete(fn);
+  };
+}
+
+/** Tear down for HMR. */
+export function teardown() {
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
+  }
+  if (retryTimeout) {
+    clearTimeout(retryTimeout);
+    retryTimeout = null;
+  }
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+  listeners.clear();
+  connectedListeners.clear();
+  reconnectListeners.clear();
+  sseConnected = false;
+  lastEventTime = 0;
+  retryCount = 0;
 }
 
 // ---------------------------------------------------------------------------

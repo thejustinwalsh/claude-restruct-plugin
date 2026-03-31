@@ -1,10 +1,17 @@
 import { useEffect, useRef } from 'react';
-import { useRefinementDetail, useStream, useActions } from '@/store';
+import {
+  useAppStore,
+  useRefinementDetail,
+  useRefinement,
+  useStream,
+  useActions,
+} from '@/store';
 import type { StreamState } from '@/store';
 import type { PipelineEvent } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
 import { XmlHighlight } from '@/components/XmlHighlight';
 
 // Stage colors for the waterfall chart
@@ -99,6 +106,38 @@ function PipelineTimeline({ events }: { events: PipelineEvent[] }) {
   );
 }
 
+function PipelineSkeleton() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg">Pipeline Timeline</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-1.5">
+          {[
+            'w-[60%]',
+            'w-[15%]',
+            'w-[80%]',
+            'w-[40%]',
+            'w-[90%]',
+            'w-[25%]',
+          ].map((width, i) => (
+            <div key={i} className="flex items-center gap-3">
+              <Skeleton className="h-4 w-28" />
+              <div className="bg-muted relative h-6 flex-1 overflow-hidden rounded-sm">
+                <Skeleton
+                  className={`absolute top-0 h-full rounded-sm ${width}`}
+                />
+              </div>
+              <Skeleton className="h-4 w-20" />
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function FlowStage({
   label,
   description,
@@ -145,7 +184,11 @@ function FlowStage({
             {stream.isStreaming && <span className="animate-pulse">▌</span>}
           </pre>
         ) : status === 'pending' ? (
-          <p className="text-muted-foreground p-4 text-xs italic">Pending...</p>
+          <div className="space-y-2 p-4">
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-3 w-[80%]" />
+            <Skeleton className="h-3 w-[60%]" />
+          </div>
         ) : status === 'failed' ? (
           <p className="text-destructive p-4 text-xs italic">Failed</p>
         ) : (
@@ -153,6 +196,19 @@ function FlowStage({
             Not available
           </p>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function MetricSkeleton() {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <Skeleton className="h-3 w-16" />
+      </CardHeader>
+      <CardContent>
+        <Skeleton className="h-6 w-20" />
       </CardContent>
     </Card>
   );
@@ -166,18 +222,57 @@ export function RefinementDetail({
   onBack: () => void;
 }) {
   const detail = useRefinementDetail(id);
+  const refinement = useRefinement(id);
   const stream = useStream();
   const { fetchRefinement } = useActions();
 
-  // Fetch on mount if not in cache
+  // Fetch full detail on mount + retry periodically for pending refinements
   useEffect(() => {
     fetchRefinement(id);
+
+    // For pending refinements, poll for completion so detail fills in
+    const interval = setInterval(() => {
+      const current = useAppStore.getState().refinements.get(id);
+      if (current && current.status === 'pending') {
+        fetchRefinement(id);
+      } else {
+        clearInterval(interval);
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
   }, [id, fetchRefinement]);
 
-  if (!detail) return <p className="text-muted-foreground">Loading...</p>;
+  // Use full detail if available, otherwise fall back to partial data from the refinement map
+  const r = detail?.refinement ?? refinement;
+  const events = detail?.events ?? null;
 
-  const { refinement: r, events } = detail;
+  // Nothing at all — truly unknown refinement
+  if (!r) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={onBack}
+            className="text-muted-foreground hover:text-foreground text-sm"
+          >
+            &larr; Back
+          </button>
+          <Skeleton className="h-8 w-48" />
+        </div>
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <MetricSkeleton />
+          <MetricSkeleton />
+          <MetricSkeleton />
+          <MetricSkeleton />
+        </div>
+        <PipelineSkeleton />
+      </div>
+    );
+  }
+
   const activeStream = stream && stream.refinementId === id ? stream : null;
+  const isPending = r.status === 'pending';
 
   return (
     <div className="space-y-6">
@@ -216,7 +311,13 @@ export function RefinementDetail({
           </CardHeader>
           <CardContent>
             <span className="text-lg font-bold">
-              {r.latency_ms > 0 ? `${(r.latency_ms / 1000).toFixed(1)}s` : '—'}
+              {r.latency_ms > 0 ? (
+                `${(r.latency_ms / 1000).toFixed(1)}s`
+              ) : isPending ? (
+                <Skeleton className="inline-block h-5 w-12" />
+              ) : (
+                '—'
+              )}
             </span>
           </CardContent>
         </Card>
@@ -256,7 +357,7 @@ export function RefinementDetail({
         </Card>
       </div>
 
-      {events && events.length > 0 && (
+      {events && events.length > 0 ? (
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Pipeline Timeline</CardTitle>
@@ -265,7 +366,9 @@ export function RefinementDetail({
             <PipelineTimeline events={events} />
           </CardContent>
         </Card>
-      )}
+      ) : isPending ? (
+        <PipelineSkeleton />
+      ) : null}
 
       <Separator />
 
@@ -281,6 +384,7 @@ export function RefinementDetail({
         label="2. LLM Input"
         description="System prompt + assembled user message sent to local Ollama model"
         content={r.input_prompt}
+        status={r.status}
       />
 
       <FlowStage
@@ -296,6 +400,7 @@ export function RefinementDetail({
         description="Composed XML injected into Claude's context window"
         content={r.refined_prompt}
         format="xml"
+        status={r.status}
       />
     </div>
   );

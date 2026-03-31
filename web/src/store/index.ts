@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 import { useShallow } from 'zustand/shallow';
-import { subscribeSSE, subscribeConnected } from '@/hooks/useSSE';
+import {
+  subscribeSSE,
+  subscribeConnected,
+  subscribeReconnect,
+  teardown,
+} from '@/hooks/useSSE';
 import type { SSEEvent } from '@/hooks/useSSE';
 import { api } from '@/api/client';
 import type {
@@ -123,6 +128,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     };
     const refs = new Map(get().refinements);
     refs.set(id, pending);
+
+    // Also populate refinementDetails so the detail page can render immediately
+    const details = new Map(get().refinementDetails);
+    details.set(id, { refinement: pending, events: [] });
+
     set({
       stream: {
         refinementId: id,
@@ -135,6 +145,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         startedAt: Date.now(),
       },
       refinements: refs,
+      refinementDetails: details,
     });
   },
 
@@ -332,6 +343,11 @@ export function useRefinementDetail(id: number): RefinementDetail | null {
   return useAppStore((s) => s.refinementDetails.get(id) ?? null);
 }
 
+/** Single refinement from the flat map (available immediately for pending entries) */
+export function useRefinement(id: number): Refinement | null {
+  return useAppStore((s) => s.refinements.get(id) ?? null);
+}
+
 /** Active stream state */
 export function useStream(): StreamState | null {
   return useAppStore((s) => s.stream);
@@ -403,11 +419,19 @@ function handleSSEEvent(evt: SSEEvent) {
   }
 }
 
+function handleReconnect() {
+  // After SSE reconnect, refresh data that might have been missed
+  const s = useAppStore.getState();
+  s.fetchRefinements();
+  s.fetchMetrics();
+}
+
 // Wire up SSE and periodic sync. Guarded for HMR — only runs once.
 let _initialized = false;
 let _syncInterval: ReturnType<typeof setInterval> | null = null;
 let _unsubSSE: (() => void) | null = null;
 let _unsubConnected: (() => void) | null = null;
+let _unsubReconnect: (() => void) | null = null;
 
 function initStore() {
   if (_initialized) return;
@@ -417,6 +441,7 @@ function initStore() {
   _unsubConnected = subscribeConnected((connected) =>
     useAppStore.setState({ connected }),
   );
+  _unsubReconnect = subscribeReconnect(handleReconnect);
 
   // Initial data load
   useAppStore.getState().fetchRefinements();
@@ -437,6 +462,8 @@ if (import.meta.hot) {
     _initialized = false;
     if (_unsubSSE) _unsubSSE();
     if (_unsubConnected) _unsubConnected();
+    if (_unsubReconnect) _unsubReconnect();
     if (_syncInterval) clearInterval(_syncInterval);
+    teardown();
   });
 }
