@@ -5,3 +5,4 @@ node_modules/
 !.restruct/verify.yaml
 .retype/
 .claude/settings.local.json
+private/*
