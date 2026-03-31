@@ -2,5 +2,6 @@ cli/internal/server/dist/
 node_modules/
 .xmake/
 .restruct/
+!.restruct/verify.yaml
 .retype/
 .claude/settings.local.json
