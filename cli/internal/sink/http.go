@@ -83,6 +83,33 @@ func (s *HttpTokenSink) Start(rawPrompt, model string) {
 	})
 }
 
+// SendInput broadcasts the LLM input prompt (step 2 in data flow).
+// Called after the prompt is built but before inference starts.
+func (s *HttpTokenSink) SendInput(inputPrompt string) {
+	if s == nil {
+		return
+	}
+	s.enqueue("/api/stream/input", map[string]interface{}{
+		"refinement_id": s.refinementID,
+		"input_prompt":  inputPrompt,
+	})
+}
+
+// SendComplete broadcasts the final composed context and pipeline timings
+// (step 4 in data flow). Called after all DB writes are done.
+func (s *HttpTokenSink) SendComplete(refinedPrompt string, llmOutput string, latencyMs int64, timings []map[string]interface{}) {
+	if s == nil {
+		return
+	}
+	s.enqueue("/api/stream/complete", map[string]interface{}{
+		"refinement_id":  s.refinementID,
+		"refined_prompt": refinedPrompt,
+		"llm_output":     llmOutput,
+		"latency_ms":     latencyMs,
+		"timings":        timings,
+	})
+}
+
 // OnToken receives a single token from the Ollama stream.
 // Never blocks — writes to the send channel for async batching.
 func (s *HttpTokenSink) OnToken(content string) {

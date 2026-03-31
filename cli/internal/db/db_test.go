@@ -560,3 +560,327 @@ func TestDefaultPath_Fallback(t *testing.T) {
 		t.Errorf("DefaultPath should end with restruct.db, got %q", got)
 	}
 }
+
+// --- Verification events ---
+
+func TestInsertAndGetVerificationEvents(t *testing.T) {
+	d := testDB(t)
+
+	// Create a session and refinement so we have a refinement_id to link to
+	d.UpsertSession(&Session{ID: "sess-v", ProjectPath: "/project", StartedAt: time.Now().UTC(), Status: "active"})
+	refID, _ := d.InsertRefinement(&Refinement{
+		SessionID: "sess-v", ProjectPath: "/project", RawPrompt: "fix bug", Status: "complete",
+	})
+
+	fileCount := 42
+	durationUs := int64(15000)
+	changedFiles := `["main.go","lib/util.go"]`
+	checksRun := `[{"name":"test","command":"go test","passed":true,"output":"ok","duration_ms":500}]`
+	result := "pass"
+
+	// Insert snapshot event linked to refinement
+	err := d.InsertVerificationEvent(&VerificationEvent{
+		SessionID:    "sess-v",
+		RefinementID: &refID,
+		Scope:        "prompt",
+		HookEvent:    "UserPromptSubmit",
+		EventType:    "snapshot",
+		FileCount:    &fileCount,
+		DurationUs:   &durationUs,
+		CwdInput:     "/project/cli",
+		ProjectDir:   "/project",
+	})
+	if err != nil {
+		t.Fatalf("insert snapshot event: %v", err)
+	}
+
+	// Insert verify event linked to same refinement
+	err = d.InsertVerificationEvent(&VerificationEvent{
+		SessionID:    "sess-v",
+		RefinementID: &refID,
+		Scope:        "prompt",
+		HookEvent:    "Stop",
+		EventType:    "verify",
+		DurationUs:   &durationUs,
+		CwdInput:     "/project/cli",
+		ProjectDir:   "/project",
+		ChangedFiles: &changedFiles,
+		ChecksRun:    &checksRun,
+		Result:       &result,
+	})
+	if err != nil {
+		t.Fatalf("insert verify event: %v", err)
+	}
+
+	// Query by refinement ID
+	events, err := d.GetVerificationEventsForRefinement(refID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+
+	if events[0].EventType != "snapshot" {
+		t.Errorf("event[0].EventType = %q, want snapshot", events[0].EventType)
+	}
+	if events[0].RefinementID == nil || *events[0].RefinementID != refID {
+		t.Errorf("event[0].RefinementID = %v, want %d", events[0].RefinementID, refID)
+	}
+	if events[0].FileCount == nil || *events[0].FileCount != 42 {
+		t.Errorf("event[0].FileCount = %v, want 42", events[0].FileCount)
+	}
+
+	if events[1].EventType != "verify" {
+		t.Errorf("event[1].EventType = %q, want verify", events[1].EventType)
+	}
+	if events[1].Result == nil || *events[1].Result != "pass" {
+		t.Errorf("event[1].Result = %v, want pass", events[1].Result)
+	}
+}
+
+func TestGetVerificationEvents_Empty(t *testing.T) {
+	d := testDB(t)
+	events, err := d.GetVerificationEventsForRefinement(9999)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events != nil {
+		t.Errorf("expected nil for unknown refinement, got %v", events)
+	}
+}
+
+func TestGetVerificationEvents_IsolatedByRefinement(t *testing.T) {
+	d := testDB(t)
+
+	d.UpsertSession(&Session{ID: "sess-iso", ProjectPath: "/p", StartedAt: time.Now().UTC(), Status: "active"})
+	ref1, _ := d.InsertRefinement(&Refinement{SessionID: "sess-iso", ProjectPath: "/p", RawPrompt: "p1", Status: "complete"})
+	ref2, _ := d.InsertRefinement(&Refinement{SessionID: "sess-iso", ProjectPath: "/p", RawPrompt: "p2", Status: "complete"})
+
+	dur := int64(1000)
+	// Event for refinement 1
+	d.InsertVerificationEvent(&VerificationEvent{
+		SessionID: "sess-iso", RefinementID: &ref1, Scope: "prompt",
+		HookEvent: "Stop", EventType: "verify", DurationUs: &dur, Result: strPtr("pass"),
+	})
+	// Event for refinement 2
+	d.InsertVerificationEvent(&VerificationEvent{
+		SessionID: "sess-iso", RefinementID: &ref2, Scope: "prompt",
+		HookEvent: "Stop", EventType: "verify", DurationUs: &dur, Result: strPtr("fail"),
+	})
+
+	events1, _ := d.GetVerificationEventsForRefinement(ref1)
+	events2, _ := d.GetVerificationEventsForRefinement(ref2)
+
+	if len(events1) != 1 {
+		t.Fatalf("ref1: expected 1 event, got %d", len(events1))
+	}
+	if *events1[0].Result != "pass" {
+		t.Errorf("ref1 event should be pass, got %q", *events1[0].Result)
+	}
+
+	if len(events2) != 1 {
+		t.Fatalf("ref2: expected 1 event, got %d", len(events2))
+	}
+	if *events2[0].Result != "fail" {
+		t.Errorf("ref2 event should be fail, got %q", *events2[0].Result)
+	}
+}
+
+func TestLatestRefinementID(t *testing.T) {
+	d := testDB(t)
+
+	// No refinements yet
+	if id := d.LatestRefinementID("sess-none"); id != 0 {
+		t.Errorf("expected 0 for empty session, got %d", id)
+	}
+
+	d.UpsertSession(&Session{ID: "sess-lat", ProjectPath: "/p", StartedAt: time.Now().UTC(), Status: "active"})
+	id1, _ := d.InsertRefinement(&Refinement{SessionID: "sess-lat", ProjectPath: "/p", RawPrompt: "p1", Status: "complete"})
+	id2, _ := d.InsertRefinement(&Refinement{SessionID: "sess-lat", ProjectPath: "/p", RawPrompt: "p2", Status: "complete"})
+
+	got := d.LatestRefinementID("sess-lat")
+	if got != id2 {
+		t.Errorf("expected %d (latest), got %d (first was %d)", id2, got, id1)
+	}
+}
+
+// TestLatestRefinementID_MatchesAfterInsert verifies that a snapshot taken
+// in the same process as a refinement insert will see the correct ID.
+// This is the fix for the parallel hook race: refine creates the record,
+// then calls takeSnapshot in the same process, so LatestRefinementID
+// must return the just-created ID.
+func TestLatestRefinementID_MatchesAfterInsert(t *testing.T) {
+	d := testDB(t)
+	d.UpsertSession(&Session{ID: "sess-race", ProjectPath: "/p", StartedAt: time.Now().UTC(), Status: "active"})
+
+	// Simulate refine: insert pending refinement, then immediately query latest
+	refID, err := d.InsertRefinement(&Refinement{
+		SessionID: "sess-race", ProjectPath: "/p", RawPrompt: "prompt 1", Status: "pending",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := d.LatestRefinementID("sess-race")
+	if got != refID {
+		t.Errorf("LatestRefinementID after insert = %d, want %d", got, refID)
+	}
+
+	// Insert second refinement (simulates next prompt), verify latest advances
+	refID2, _ := d.InsertRefinement(&Refinement{
+		SessionID: "sess-race", ProjectPath: "/p", RawPrompt: "prompt 2", Status: "pending",
+	})
+	got2 := d.LatestRefinementID("sess-race")
+	if got2 != refID2 {
+		t.Errorf("LatestRefinementID after second insert = %d, want %d", got2, refID2)
+	}
+}
+
+// TestLatestRefinementID_SessionIsolation ensures different sessions don't leak.
+func TestLatestRefinementID_SessionIsolation(t *testing.T) {
+	d := testDB(t)
+	d.UpsertSession(&Session{ID: "s-a", ProjectPath: "/p", StartedAt: time.Now().UTC(), Status: "active"})
+	d.UpsertSession(&Session{ID: "s-b", ProjectPath: "/p", StartedAt: time.Now().UTC(), Status: "active"})
+
+	d.InsertRefinement(&Refinement{SessionID: "s-a", ProjectPath: "/p", RawPrompt: "a1", Status: "complete"})
+	refB, _ := d.InsertRefinement(&Refinement{SessionID: "s-b", ProjectPath: "/p", RawPrompt: "b1", Status: "complete"})
+
+	// Session b should only see its own refinement
+	got := d.LatestRefinementID("s-b")
+	if got != refB {
+		t.Errorf("session b latest = %d, want %d (should not see session a)", got, refB)
+	}
+
+	// Nonexistent session returns 0
+	if d.LatestRefinementID("s-none") != 0 {
+		t.Error("nonexistent session should return 0")
+	}
+}
+
+// TestVerificationEvent_NullRefinementID ensures events with no refinement_id
+// are not returned when querying by refinement_id.
+func TestVerificationEvent_NullRefinementID(t *testing.T) {
+	d := testDB(t)
+	d.UpsertSession(&Session{ID: "sess-null", ProjectPath: "/p", StartedAt: time.Now().UTC(), Status: "active"})
+	refID, _ := d.InsertRefinement(&Refinement{SessionID: "sess-null", ProjectPath: "/p", RawPrompt: "p", Status: "complete"})
+
+	dur := int64(100)
+
+	// Insert event WITHOUT refinement_id (old data or edge case)
+	d.InsertVerificationEvent(&VerificationEvent{
+		SessionID: "sess-null", Scope: "prompt",
+		HookEvent: "Stop", EventType: "verify", DurationUs: &dur, Result: strPtr("pass"),
+		// RefinementID intentionally nil
+	})
+
+	// Insert event WITH refinement_id
+	d.InsertVerificationEvent(&VerificationEvent{
+		SessionID: "sess-null", RefinementID: &refID, Scope: "prompt",
+		HookEvent: "Stop", EventType: "verify", DurationUs: &dur, Result: strPtr("pass"),
+	})
+
+	events, _ := d.GetVerificationEventsForRefinement(refID)
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event (linked), got %d (null-linked event leaked)", len(events))
+	}
+}
+
+// TestVerificationEvent_SnapshotBeforeVerifyOrdering ensures events come back
+// in chronological order (snapshot first, then verify).
+func TestVerificationEvent_SnapshotBeforeVerifyOrdering(t *testing.T) {
+	d := testDB(t)
+	d.UpsertSession(&Session{ID: "sess-ord", ProjectPath: "/p", StartedAt: time.Now().UTC(), Status: "active"})
+	refID, _ := d.InsertRefinement(&Refinement{SessionID: "sess-ord", ProjectPath: "/p", RawPrompt: "p", Status: "complete"})
+
+	dur := int64(100)
+
+	// Insert verify first (id=1), then snapshot (id=2)
+	// But created_at defaults to CURRENT_TIMESTAMP which should be same
+	// The ORDER BY created_at ASC should still preserve insert order for same timestamp
+	d.InsertVerificationEvent(&VerificationEvent{
+		SessionID: "sess-ord", RefinementID: &refID, Scope: "prompt",
+		HookEvent: "UserPromptSubmit", EventType: "snapshot", DurationUs: &dur,
+	})
+	d.InsertVerificationEvent(&VerificationEvent{
+		SessionID: "sess-ord", RefinementID: &refID, Scope: "prompt",
+		HookEvent: "Stop", EventType: "verify", DurationUs: &dur, Result: strPtr("pass"),
+	})
+
+	events, _ := d.GetVerificationEventsForRefinement(refID)
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if events[0].EventType != "snapshot" {
+		t.Error("first event should be snapshot (chronological order)")
+	}
+	if events[1].EventType != "verify" {
+		t.Error("second event should be verify")
+	}
+}
+
+// TestRecorderSnapshot_LinksRefinement tests the recorder convenience method.
+func TestRecorderSnapshot_LinksRefinement(t *testing.T) {
+	d := testDB(t)
+	d.UpsertSession(&Session{ID: "sess-rec", ProjectPath: "/p", StartedAt: time.Now().UTC(), Status: "active"})
+	refID, _ := d.InsertRefinement(&Refinement{SessionID: "sess-rec", ProjectPath: "/p", RawPrompt: "p", Status: "complete"})
+
+	r := NewRecorder(d, "")
+	r.RecordSnapshot("sess-rec", refID, "prompt", "UserPromptSubmit", "/p/cli", "/p", 50, 3000)
+
+	events, _ := d.GetVerificationEventsForRefinement(refID)
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].RefinementID == nil || *events[0].RefinementID != refID {
+		t.Errorf("refinement_id = %v, want %d", events[0].RefinementID, refID)
+	}
+	if *events[0].FileCount != 50 {
+		t.Errorf("file_count = %d, want 50", *events[0].FileCount)
+	}
+	if *events[0].DurationUs != 3000 {
+		t.Errorf("duration_us = %d, want 3000", *events[0].DurationUs)
+	}
+}
+
+// TestRecorderVerification_LinksRefinement tests the recorder convenience method.
+func TestRecorderVerification_LinksRefinement(t *testing.T) {
+	d := testDB(t)
+	d.UpsertSession(&Session{ID: "sess-rv", ProjectPath: "/p", StartedAt: time.Now().UTC(), Status: "active"})
+	refID, _ := d.InsertRefinement(&Refinement{SessionID: "sess-rv", ProjectPath: "/p", RawPrompt: "p", Status: "complete"})
+
+	r := NewRecorder(d, "")
+	r.RecordVerification("sess-rv", refID, "prompt", "Stop", "/p", "/p",
+		`["main.go"]`,
+		`[{"name":"test","command":"go test","passed":false,"output":"FAIL","duration_ms":100}]`,
+		"fail", 5000)
+
+	events, _ := d.GetVerificationEventsForRefinement(refID)
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if *events[0].Result != "fail" {
+		t.Errorf("result = %q, want fail", *events[0].Result)
+	}
+	if events[0].ChangedFiles == nil || *events[0].ChangedFiles != `["main.go"]` {
+		t.Errorf("changed_files = %v", events[0].ChangedFiles)
+	}
+	if events[0].ChecksRun == nil {
+		t.Error("checks_run should not be nil")
+	}
+}
+
+// TestRecorderSnapshot_ZeroRefinementID stores NULL when refinement_id is 0.
+func TestRecorderSnapshot_ZeroRefinementID(t *testing.T) {
+	d := testDB(t)
+	r := NewRecorder(d, "")
+	r.RecordSnapshot("sess-zero", 0, "prompt", "UserPromptSubmit", "/p", "/p", 10, 100)
+
+	// Should not be findable by refinement_id = 0
+	events, _ := d.GetVerificationEventsForRefinement(0)
+	if len(events) != 0 {
+		t.Errorf("events with refinement_id=0 should not be returned, got %d", len(events))
+	}
+}
+
+func strPtr(s string) *string { return &s }

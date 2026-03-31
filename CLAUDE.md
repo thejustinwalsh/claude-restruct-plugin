@@ -30,14 +30,13 @@
 ## Workflow
 - Conventional commits
 - Prompt versions tracked in `cli/internal/prompt/versions/`
-
-## After Every Change
-- Run `pnpm test` from root and verify all tests pass before considering work done
-- Run `pnpm build` from root to confirm the project compiles cleanly
-- If you touched TypeScript, verify types with `pnpm --filter web exec tsc --noEmit`
-- If you touched Go, run `pnpm --filter @restruct/cli exec go vet ./...`
 - If you added new behavior, add or update tests to cover it
-- Do not skip verification steps — broken code that "looks right" is worse than an error caught early
+- Prefer focused unit tests over broad integration tests
+- When fixing a bug, add a test that reproduces it before fixing
+
+## Constraints
+- Hooks always map to CLI commands — the restruct binary is the interface for all hook operations
+- Performance is critical due to the interactive nature of the system; track timing with metrics and use performant algorithms in critical code paths
 
 ## Do NOT
 - Do not use `as` in TypeScript to fix type errors

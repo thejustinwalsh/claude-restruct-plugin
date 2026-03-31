@@ -113,6 +113,31 @@ export interface ActiveStream {
   started_at: string;
 }
 
+export interface VerificationEvent {
+  id: number;
+  session_id: string;
+  refinement_id: number | null;
+  scope: string;
+  hook_event: string;
+  event_type: 'snapshot' | 'verify';
+  file_count: number | null;
+  duration_us: number | null;
+  cwd_input: string;
+  project_dir: string;
+  changed_files: string | null;
+  checks_run: string | null;
+  result: string | null;
+  created_at: string;
+}
+
+export interface CheckRun {
+  name: string;
+  command: string;
+  passed: boolean;
+  output: string;
+  duration_ms: number;
+}
+
 export const api = {
   info: () => fetchJSON<ServerInfo>('/info'),
   health: () => fetchJSON<Health>('/health'),
@@ -125,9 +150,11 @@ export const api = {
   refinements: (limit = 50, offset = 0) =>
     fetchJSON<Refinement[]>(`/refinements?limit=${limit}&offset=${offset}`),
   refinement: (id: number) =>
-    fetchJSON<{ refinement: Refinement; events: PipelineEvent[] }>(
-      `/refinements/${id}`,
-    ),
+    fetchJSON<{
+      refinement: Refinement;
+      events: PipelineEvent[];
+      verifications: VerificationEvent[];
+    }>(`/refinements/${id}`),
   refinementEvents: (id: number) =>
     fetchJSON<PipelineEvent[]>(`/refinements/${id}/events`),
   stats: (limit = 200) => fetchJSON<StatsData>(`/stats?limit=${limit}`),

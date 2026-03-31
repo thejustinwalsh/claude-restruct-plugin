@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tjw/restruct/internal/config"
@@ -16,6 +17,7 @@ import (
 	"github.com/tjw/restruct/internal/session"
 	"github.com/tjw/restruct/internal/sink"
 	"github.com/tjw/restruct/internal/toggle"
+	"github.com/tjw/restruct/internal/verify"
 )
 
 var refineCmd = &cobra.Command{
@@ -61,6 +63,14 @@ are appended as additional context that guides Claude's behavior.`,
 			cwd, _ = os.Getwd()
 		}
 
+		// Resolve project root for snapshot/verify (CLAUDE_PROJECT_DIR is always set by Claude Code)
+		projectDir := os.Getenv("CLAUDE_PROJECT_DIR")
+		if projectDir == "" {
+			projectDir = cwd
+		}
+
+		serverURL := fmt.Sprintf("http://localhost:%s", cfg.Server.Port)
+
 		// Open DB for telemetry (best-effort, don't block on failure)
 		var recorder *db.Recorder
 		database, dbErr := db.Open(db.DefaultPath())
@@ -68,7 +78,7 @@ are appended as additional context that guides Claude's behavior.`,
 			slog.Warn("failed to open db, telemetry disabled", "error", dbErr)
 		} else {
 			defer database.Close()
-			recorder = db.NewRecorder(database)
+			recorder = db.NewRecorder(database, serverURL)
 			recorder.RecordSession(input.SessionID, cwd, input.TranscriptPath)
 		}
 
@@ -86,15 +96,20 @@ are appended as additional context that guides Claude's behavior.`,
 			!pipeline.ShouldRefine(input.Prompt)
 		if shouldSkip {
 			slog.Debug("passthrough", "bypass", bypass, "words", len(strings.Fields(input.Prompt)))
+			var passthroughRefID int64
 			if recorder != nil {
 				valid := true
-				recorder.RecordRefinement(&db.Refinement{
+				passthroughRefID = recorder.RecordRefinement(&db.Refinement{
 					SessionID:   input.SessionID,
 					ProjectPath: cwd,
 					RawPrompt:   input.Prompt,
 					Passthrough: true,
 					OutputValid: &valid,
 				})
+			}
+			// Take snapshot even for passthroughs — verification needs a baseline
+			if database != nil && recorder != nil && input.SessionID != "" && passthroughRefID > 0 {
+				takeSnapshotForRefinement(database, recorder, input.SessionID, passthroughRefID, cwd, projectDir)
 			}
 			return hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
 		}
@@ -125,8 +140,14 @@ are appended as additional context that guides Claude's behavior.`,
 
 		// Create streaming sink (best-effort, nil if server unavailable).
 		// All HTTP calls happen in a background goroutine — never blocks the hook.
-		serverURL := fmt.Sprintf("http://localhost:%s", cfg.Server.Port)
 		tokenSink := sink.NewHttpTokenSink(serverURL, refID, input.SessionID)
+
+		// Broadcast the LLM input prompt as soon as it's built (before inference)
+		p.SetInputReadyCallback(func(inputPrompt string) {
+			if tokenSink != nil {
+				tokenSink.SendInput(inputPrompt)
+			}
+		})
 		if tokenSink != nil {
 			defer tokenSink.Close() // ensure background sends complete before exit
 			tokenSink.Start(input.Prompt, cfg.Ollama.Model)
@@ -182,6 +203,18 @@ are appended as additional context that guides Claude's behavior.`,
 			}
 		}
 
+		// Broadcast completion with final context + pipeline timings
+		if tokenSink != nil && refID > 0 {
+			var timingsData []map[string]interface{}
+			for _, t := range result.Timings {
+				timingsData = append(timingsData, map[string]interface{}{
+					"stage":       t.Stage,
+					"duration_us": t.Duration.Microseconds(),
+				})
+			}
+			tokenSink.SendComplete(result.Refined, result.LLMOutput, result.TotalTime.Milliseconds(), timingsData)
+		}
+
 		if dryRun {
 			fmt.Fprintln(os.Stderr, "--- Refined prompt (dry-run, not injected) ---")
 			fmt.Fprintln(os.Stderr, result.Refined)
@@ -195,6 +228,11 @@ are appended as additional context that guides Claude's behavior.`,
 			return hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
 		}
 
+		// Take snapshot for verification baseline (same DB connection, same process — no race)
+		if database != nil && recorder != nil && input.SessionID != "" && refID > 0 {
+			takeSnapshotForRefinement(database, recorder, input.SessionID, refID, cwd, projectDir)
+		}
+
 		// Frame the output for Claude or passthrough if no context needed
 		framed := prompt.FrameContext(result.Refined)
 		if framed == "" || result.NoContext {
@@ -202,6 +240,37 @@ are appended as additional context that guides Claude's behavior.`,
 		}
 		return hook.WriteOutput(os.Stdout, hook.ContextOutput(framed))
 	},
+}
+
+// takeSnapshotForRefinement takes a file snapshot linked to the given refinement.
+// Called at the end of refine to establish the baseline for later verification.
+// Best-effort: failures are logged but don't block the hook.
+func takeSnapshotForRefinement(database *db.DB, recorder *db.Recorder, sessionID string, refID int64, cwd, projectDir string) {
+	cfg, err := verify.LoadConfig(projectDir)
+	if err != nil || cfg == nil || len(cfg.Checks) == 0 {
+		return
+	}
+
+	globs := verify.CollectGlobs(cfg)
+	start := time.Now()
+	if err := verify.TakeSnapshot(database, sessionID, "prompt", projectDir, globs); err != nil {
+		slog.Warn("refine: snapshot error", "error", err)
+		return
+	}
+	durationUs := time.Since(start).Microseconds()
+
+	var fileCount int
+	database.Pool().QueryRow(
+		"SELECT COUNT(*) FROM snapshots WHERE session_id = ? AND scope = 'prompt'",
+		sessionID,
+	).Scan(&fileCount)
+
+	slog.Debug("refine: snapshot taken", "refinement_id", refID, "files", fileCount, "duration_us", durationUs)
+
+	// DB write + SSE broadcast handled by the Recorder
+	recorder.RecordSnapshot(sessionID, refID, "prompt", "UserPromptSubmit", cwd, projectDir, fileCount, durationUs)
+
+	verify.PruneStaleSnapshots(database, 24*time.Hour)
 }
 
 func init() {

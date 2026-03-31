@@ -38,24 +38,22 @@ func TestBuild_NumberedRules(t *testing.T) {
 	}
 }
 
-func TestBuild_AfterEveryChangeAreProcessRules(t *testing.T) {
+func TestBuild_AfterEveryChangeAreWorkflowRules(t *testing.T) {
 	rules := "## After Every Change\n- Run tests\n- Run build\n## Code Style\n- no hardcoding"
 	b := NewBuilder(0)
 	r := b.Build("fix", rules, "", "")
 
-	// "After Every Change" items are process rules (verification guardrails)
-	if len(r.Rules.ProcessRules) != 2 {
-		t.Errorf("expected 2 process rules from After Every Change, got %d: %v", len(r.Rules.ProcessRules), r.Rules.ProcessRules)
+	// "After Every Change" items are workflow rules (always injected)
+	if len(r.Rules.WorkflowRules) != 2 {
+		t.Errorf("expected 2 workflow rules from After Every Change, got %d: %v", len(r.Rules.WorkflowRules), r.Rules.WorkflowRules)
 	}
-	// Everything else is a context rule for LLM selection
 	if len(r.Rules.ContextRules) != 1 {
 		t.Errorf("expected 1 context rule from Code Style, got %d: %v", len(r.Rules.ContextRules), r.Rules.ContextRules)
 	}
-	// Process rules should NOT appear in numbered LLM rules
+	// Workflow rules should NOT appear in numbered LLM rules
 	if strings.Contains(r.UserMsg, "Run tests") {
-		t.Error("process rules should not be in LLM user message")
+		t.Error("workflow rules should not be in LLM user message")
 	}
-	// Context rules SHOULD appear numbered
 	if !strings.Contains(r.UserMsg, "1. no hardcoding") {
 		t.Error("context rules should be in numbered list")
 	}
@@ -143,7 +141,7 @@ func TestBuild_WhitespaceOnlyTreatedAsEmpty(t *testing.T) {
 
 func TestParseRules_Empty(t *testing.T) {
 	pr := ParseRules("")
-	if len(pr.ProcessRules) != 0 || len(pr.ContextRules) != 0 || len(pr.AntiPatterns) != 0 {
+	if len(pr.WorkflowRules) != 0 || len(pr.ConstraintRules) != 0 || len(pr.ContextRules) != 0 || len(pr.AntiPatterns) != 0 {
 		t.Error("empty rules should produce empty parsed rules")
 	}
 }
@@ -162,8 +160,8 @@ func TestParseRules_MixedSections(t *testing.T) {
 
 	pr := ParseRules(raw)
 
-	if len(pr.ProcessRules) != 2 {
-		t.Errorf("expected 2 process rules from After Every Change, got %d: %v", len(pr.ProcessRules), pr.ProcessRules)
+	if len(pr.WorkflowRules) != 2 {
+		t.Errorf("expected 2 workflow rules from After Every Change, got %d: %v", len(pr.WorkflowRules), pr.WorkflowRules)
 	}
 	if len(pr.ContextRules) != 2 {
 		t.Errorf("expected 2 context rules from Code Style, got %d: %v", len(pr.ContextRules), pr.ContextRules)
@@ -174,8 +172,6 @@ func TestParseRules_MixedSections(t *testing.T) {
 }
 
 func TestParseRules_LoaderFormat(t *testing.T) {
-	// This matches the actual format produced by rules.Loader:
-	// "## Rules from CLAUDE.md\n{file content}"
 	raw := `## Rules from CLAUDE.md
 # Restruct
 
@@ -203,9 +199,9 @@ func TestParseRules_LoaderFormat(t *testing.T) {
 
 	pr := ParseRules(raw)
 
-	t.Logf("Process rules: %d", len(pr.ProcessRules))
-	for i, r := range pr.ProcessRules {
-		t.Logf("  P%d: %s", i+1, r)
+	t.Logf("Workflow rules: %d", len(pr.WorkflowRules))
+	for i, r := range pr.WorkflowRules {
+		t.Logf("  W%d: %s", i+1, r)
 	}
 	t.Logf("Context rules: %d", len(pr.ContextRules))
 	for i, r := range pr.ContextRules {
@@ -217,7 +213,7 @@ func TestParseRules_LoaderFormat(t *testing.T) {
 	}
 
 	if len(pr.ContextRules) == 0 {
-		t.Error("expected context rules — all rules should be context rules for LLM selection")
+		t.Error("expected context rules")
 	}
 	if len(pr.AntiPatterns) == 0 {
 		t.Error("expected anti-patterns from Do NOT section")
@@ -228,4 +224,142 @@ func TestParseRules_LoaderFormat(t *testing.T) {
 		t.Error("FormatForLLM should produce non-empty output")
 	}
 	t.Logf("\n=== FormatForLLM ===\n%s", llm)
+}
+
+func TestParseRules_WorkflowSection(t *testing.T) {
+	raw := `## Workflow
+- If you added new behavior, add or update tests
+- Prefer focused unit tests over broad integration tests
+## Do NOT
+- skip tests`
+
+	pr := ParseRules(raw)
+
+	if len(pr.WorkflowRules) != 2 {
+		t.Errorf("expected 2 workflow rules, got %d: %v", len(pr.WorkflowRules), pr.WorkflowRules)
+	}
+	if pr.WorkflowRules[0] != "If you added new behavior, add or update tests" {
+		t.Errorf("workflow[0] = %q", pr.WorkflowRules[0])
+	}
+	// Workflow rules should NOT appear in LLM message
+	llm := pr.FormatForLLM()
+	if strings.Contains(llm, "add or update tests") {
+		t.Error("workflow rules should not be in FormatForLLM output")
+	}
+}
+
+func TestParseRules_ConstraintsSection(t *testing.T) {
+	raw := `## Constraints
+- Always map to CLI commands
+- Performance is critical
+## Do NOT
+- skip tests`
+
+	pr := ParseRules(raw)
+
+	if len(pr.ConstraintRules) != 2 {
+		t.Errorf("expected 2 constraint rules, got %d: %v", len(pr.ConstraintRules), pr.ConstraintRules)
+	}
+	if pr.ConstraintRules[0] != "Always map to CLI commands" {
+		t.Errorf("constraint[0] = %q", pr.ConstraintRules[0])
+	}
+	// Constraints SHOULD appear in LLM message (they're LLM-selected)
+	llm := pr.FormatForLLM()
+	if !strings.Contains(llm, "Always map to CLI commands") {
+		t.Error("constraints should appear in FormatForLLM for LLM selection")
+	}
+	if !strings.Contains(llm, "Constraints (design/architectural") {
+		t.Error("constraints section should have its own header in LLM output")
+	}
+}
+
+func TestParseRules_AllFourCategories(t *testing.T) {
+	raw := `## Build & Test
+- pnpm test
+## Workflow
+- Add tests for new behavior
+## Constraints
+- Performance is critical
+- Always use CLI commands
+## Do NOT
+- use eval`
+
+	pr := ParseRules(raw)
+
+	if len(pr.ContextRules) != 1 {
+		t.Errorf("context rules: got %d, want 1", len(pr.ContextRules))
+	}
+	if len(pr.WorkflowRules) != 1 {
+		t.Errorf("workflow rules: got %d, want 1", len(pr.WorkflowRules))
+	}
+	if len(pr.ConstraintRules) != 2 {
+		t.Errorf("constraint rules: got %d, want 2", len(pr.ConstraintRules))
+	}
+	if len(pr.AntiPatterns) != 1 {
+		t.Errorf("anti-patterns: got %d, want 1", len(pr.AntiPatterns))
+	}
+}
+
+func TestParseRules_ConstraintsInLoaderFormat(t *testing.T) {
+	raw := `## Rules from CLAUDE.md
+# Restruct
+
+## Build & Test
+- ` + "`pnpm test`" + ` — runs all Go tests
+
+## Code Style
+- TypeScript: no as type assertions
+
+## Workflow
+- If you added new behavior, add or update tests to cover it
+- Prefer focused unit tests over broad integration tests
+
+## Constraints
+- Always map to CLI commands
+- Performance is critical
+
+## Do NOT
+- Do not use as in TypeScript
+- Do not add CGO dependencies`
+
+	pr := ParseRules(raw)
+
+	t.Logf("Workflow rules: %d", len(pr.WorkflowRules))
+	t.Logf("Constraint rules: %d", len(pr.ConstraintRules))
+	t.Logf("Context rules: %d", len(pr.ContextRules))
+	t.Logf("Anti-patterns: %d", len(pr.AntiPatterns))
+
+	if len(pr.WorkflowRules) != 2 {
+		t.Errorf("expected 2 workflow rules, got %d: %v", len(pr.WorkflowRules), pr.WorkflowRules)
+	}
+	if len(pr.ConstraintRules) != 2 {
+		t.Errorf("expected 2 constraint rules, got %d: %v", len(pr.ConstraintRules), pr.ConstraintRules)
+	}
+	if len(pr.AntiPatterns) != 2 {
+		t.Errorf("expected 2 anti-patterns, got %d", len(pr.AntiPatterns))
+	}
+
+	llm := pr.FormatForLLM()
+	// Workflow should NOT be in LLM output
+	if strings.Contains(llm, "add or update tests") {
+		t.Error("workflow rules should not appear in FormatForLLM")
+	}
+	// Constraints SHOULD be in LLM output
+	if !strings.Contains(llm, "CLI commands") {
+		t.Error("constraints should appear in FormatForLLM")
+	}
+}
+
+func TestParseRules_BackwardCompat_AfterEveryChange(t *testing.T) {
+	// Legacy "After Every Change" still maps to workflow
+	raw := `## After Every Change
+- Run linter
+## Workflow
+- Add tests`
+
+	pr := ParseRules(raw)
+
+	if len(pr.WorkflowRules) != 2 {
+		t.Errorf("expected 2 workflow rules from both legacy and new headers, got %d: %v", len(pr.WorkflowRules), pr.WorkflowRules)
+	}
 }

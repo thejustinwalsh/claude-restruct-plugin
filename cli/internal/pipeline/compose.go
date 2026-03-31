@@ -57,12 +57,29 @@ func composeContext(c *LLMClassification, rules *prompt.ParsedRules, gitBranch s
 	sb.WriteString("- Verify before assuming. Check the current state of code, config, and dependencies rather than guessing from memory.\n")
 	sb.WriteString("</protocol>\n")
 
-	// Constraints — verification guardrails, conditional on request type
-	if implGuards && len(rules.ProcessRules) > 0 {
-		sb.WriteString("\n<constraints>\n")
-		sb.WriteString("<!-- Verification steps required after changes. -->\n")
-		for _, r := range rules.ProcessRules {
+	// Workflow — process steps, always injected for code changes
+	if implGuards && len(rules.WorkflowRules) > 0 {
+		sb.WriteString("\n<workflow>\n")
+		sb.WriteString("<!-- Process steps to follow for this change. -->\n")
+		for _, r := range rules.WorkflowRules {
 			fmt.Fprintf(&sb, "- %s\n", r)
+		}
+		sb.WriteString("</workflow>\n")
+	}
+
+	// Constraints — LLM-selected design/architectural constraints, capped
+	const maxConstraints = 3
+	selectedConstraints := c.RelevantConstraints
+	if len(selectedConstraints) > maxConstraints {
+		selectedConstraints = selectedConstraints[:maxConstraints]
+	}
+	if len(selectedConstraints) > 0 {
+		sb.WriteString("\n<constraints>\n")
+		sb.WriteString("<!-- Design and architectural constraints relevant to this change. -->\n")
+		for _, idx := range selectedConstraints {
+			if idx >= 1 && idx <= len(rules.ConstraintRules) {
+				fmt.Fprintf(&sb, "- %s\n", rules.ConstraintRules[idx-1])
+			}
 		}
 		sb.WriteString("</constraints>\n")
 	}

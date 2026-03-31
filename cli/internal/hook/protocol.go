@@ -5,7 +5,8 @@ import (
 	"io"
 )
 
-// HookInput represents the JSON payload Claude Code sends to UserPromptSubmit hooks via stdin.
+// HookInput represents the JSON payload Claude Code sends to hooks via stdin.
+// Fields are a superset across hook events; unused fields are omitted/zero.
 // Reference: https://docs.anthropic.com/en/docs/claude-code/hooks
 type HookInput struct {
 	SessionID      string `json:"session_id"`
@@ -13,7 +14,14 @@ type HookInput struct {
 	Cwd            string `json:"cwd"`
 	PermissionMode string `json:"permission_mode"`
 	HookEventName  string `json:"hook_event_name"`
-	Prompt         string `json:"prompt"`
+	Prompt         string `json:"prompt,omitempty"`
+
+	// TaskCreated / TaskCompleted fields
+	TaskID      string `json:"task_id,omitempty"`
+	TaskSubject string `json:"task_subject,omitempty"`
+
+	// Stop hook fields
+	StopHookActive bool `json:"stop_hook_active,omitempty"`
 }
 
 // HookSpecificOutput contains fields specific to the UserPromptSubmit hook event.

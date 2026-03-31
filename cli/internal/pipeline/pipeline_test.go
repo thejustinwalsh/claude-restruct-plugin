@@ -438,9 +438,9 @@ func TestComposeContext_Question(t *testing.T) {
 	if !strings.Contains(result, "<protocol>") {
 		t.Error("questions should still get protocol")
 	}
-	// But verification constraints are impl-only
-	if strings.Contains(result, "<constraints>") {
-		t.Error("questions should NOT get verification constraints")
+	// Workflow is impl-only
+	if strings.Contains(result, "<workflow>") {
+		t.Error("questions should NOT get workflow")
 	}
 	if !strings.Contains(result, "<anti_patterns>") {
 		t.Error("questions SHOULD get anti_patterns when LLM selects them")
@@ -466,6 +466,77 @@ func TestComposeContext_OutOfBoundsIndex(t *testing.T) {
 		t.Error("valid index should be included")
 	}
 	// Should not panic on out-of-bounds
+}
+
+func TestComposeContext_WithWorkflow(t *testing.T) {
+	c := &LLMClassification{
+		Type:   "code_change",
+		Intent: "Add new feature",
+	}
+	rules := &prompt.ParsedRules{
+		WorkflowRules: []string{
+			"If you added new behavior, add or update tests",
+			"Prefer focused unit tests",
+		},
+	}
+
+	result := composeContext(c, rules, "main")
+
+	if !strings.Contains(result, "<workflow>") {
+		t.Error("code_change with WorkflowRules should include <workflow>")
+	}
+	if !strings.Contains(result, "add or update tests") {
+		t.Error("missing first workflow rule")
+	}
+	if !strings.Contains(result, "focused unit tests") {
+		t.Error("missing second workflow rule")
+	}
+}
+
+func TestComposeContext_WithLLMSelectedConstraints(t *testing.T) {
+	c := &LLMClassification{
+		Type:                "code_change",
+		Intent:              "Optimize query performance",
+		RelevantConstraints: []int{1, 2},
+	}
+	rules := &prompt.ParsedRules{
+		ConstraintRules: []string{
+			"Performance is critical",
+			"Always map to CLI commands",
+			"Third constraint not selected",
+		},
+	}
+
+	result := composeContext(c, rules, "main")
+
+	if !strings.Contains(result, "<constraints>") {
+		t.Error("should include <constraints> when LLM selects them")
+	}
+	if !strings.Contains(result, "Performance is critical") {
+		t.Error("missing first selected constraint")
+	}
+	if !strings.Contains(result, "Always map to CLI commands") {
+		t.Error("missing second selected constraint")
+	}
+	if strings.Contains(result, "Third constraint") {
+		t.Error("unselected constraint should not appear")
+	}
+}
+
+func TestComposeContext_NoWorkflowForQuestion(t *testing.T) {
+	c := &LLMClassification{
+		Type:   "question",
+		Intent: "How does X work?",
+	}
+	rules := &prompt.ParsedRules{
+		WorkflowRules: []string{"Add tests for new behavior"},
+	}
+
+	result := composeContext(c, rules, "main")
+
+	if strings.Contains(result, "<workflow>") {
+		t.Error("question type should NOT include workflow")
+	}
 }
 
 func TestBuildCacheKey_DeterministicForSameInput(t *testing.T) {
@@ -543,8 +614,8 @@ func TestIntegration_RealCLAUDEmd(t *testing.T) {
 	// Parse rules — should find all three categories
 	parsed := prompt.ParseRules(content)
 
-	t.Logf("Process rules: %d, Context rules: %d, Anti-patterns: %d",
-		len(parsed.ProcessRules), len(parsed.ContextRules), len(parsed.AntiPatterns))
+	t.Logf("Workflow: %d, Constraints: %d, Context: %d, Anti-patterns: %d",
+		len(parsed.WorkflowRules), len(parsed.ConstraintRules), len(parsed.ContextRules), len(parsed.AntiPatterns))
 
 	if len(parsed.ContextRules) == 0 {
 		t.Error("expected context rules from CLAUDE.md (Code Style, Architecture)")
@@ -647,13 +718,14 @@ func TestIntegration_FullBuildCompose(t *testing.T) {
 		t.Error("missing session context")
 	}
 
-	// Simulate LLM selecting rules by index
+	// Simulate LLM selecting rules by index (including constraints)
 	classification := &LLMClassification{
-		Type:             "code_change",
-		Intent:           "Fix premature auth token expiration",
-		Analysis:         []string{"Check token TTL config", "Review recent middleware changes"},
-		RelevantRules:    []int{1, 2},
-		RelevantAntiPats: []int{1},
+		Type:                "code_change",
+		Intent:              "Fix premature auth token expiration",
+		Analysis:            []string{"Check token TTL config", "Review recent middleware changes"},
+		RelevantRules:       []int{1, 2},
+		RelevantConstraints: []int{1},
+		RelevantAntiPats:    []int{1},
 	}
 
 	// Compose final output
@@ -661,15 +733,12 @@ func TestIntegration_FullBuildCompose(t *testing.T) {
 
 	t.Logf("Composed output (%d chars):\n%s", len(composed), composed)
 
-	// Verify all sections present
+	// Verify core sections present
 	if !strings.Contains(composed, "<intent>") {
 		t.Error("composed output missing intent")
 	}
 	if !strings.Contains(composed, "<applicable_rules>") {
-		t.Error("composed output missing applicable_rules — LLM selected [1,2] but they weren't resolved")
-	}
-	if !strings.Contains(composed, "<constraints>") {
-		t.Error("composed output missing constraints")
+		t.Error("composed output missing applicable_rules")
 	}
 	if !strings.Contains(composed, "Plan first") {
 		t.Error("composed output missing protocol directive")
@@ -678,6 +747,16 @@ func TestIntegration_FullBuildCompose(t *testing.T) {
 		t.Error("composed output missing analysis")
 	}
 	if !strings.Contains(composed, "<anti_patterns>") {
-		t.Error("composed output missing anti_patterns — LLM selected [1] but it wasn't resolved")
+		t.Error("composed output missing anti_patterns")
+	}
+
+	// Workflow should appear for code_change if CLAUDE.md has ## Workflow
+	if len(result.Rules.WorkflowRules) > 0 && !strings.Contains(composed, "<workflow>") {
+		t.Error("composed output missing workflow (CLAUDE.md has ## Workflow)")
+	}
+
+	// Constraints should appear if LLM selected them and CLAUDE.md has ## Constraints
+	if len(result.Rules.ConstraintRules) > 0 && !strings.Contains(composed, "<constraints>") {
+		t.Error("composed output missing constraints (LLM selected [1] but they weren't resolved)")
 	}
 }

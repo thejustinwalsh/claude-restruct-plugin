@@ -31,6 +31,11 @@ system caps at 3 — anything beyond is discarded. Do NOT select all
 rules. A request about auth doesn't need TypeScript linting rules.
 If none apply, empty array (Claude gets no project rules).
 
+**relevant_constraints** — design and architectural constraints. Select
+when the request touches a system where these constraints apply.
+Rank by relevance, most important first. System caps at 3. Example:
+"performance is critical" applies when touching hot paths, not docs.
+
 **relevant_anti_patterns** — higher value than rules. Anti-patterns
 prevent mistakes. Rank by relevance, most important first. System
 caps at 6. Select anti-patterns the developer could plausibly violate.
@@ -48,6 +53,7 @@ caps at 6. Select anti-patterns the developer could plausibly violate.
     "Recent auth middleware refactor may have introduced the regression."
   ],
   "relevant_rules": [2, 5],
+  "relevant_constraints": [1],
   "relevant_anti_patterns": [1, 3],
   "clarification": []
 }
@@ -65,10 +71,10 @@ caps at 6. Select anti-patterns the developer could plausibly violate.
 Developer request: "fix the auth bug where tokens expire too fast"
 Recent commits: "d67cbb5 feat: refactor auth middleware", "cfaea12 fix: token refresh timing"
 
-{"type":"code_change","intent":"Investigate and fix premature authentication token expiration.","recent_activity":"Auth middleware refactor, token refresh fix.","analysis":["Could originate in TTL config, refresh logic, or clock skew.","Recent auth middleware refactor may have introduced the regression."],"relevant_rules":[1,2,3],"relevant_anti_patterns":[],"clarification":[]}
+{"type":"code_change","intent":"Investigate and fix premature authentication token expiration.","recent_activity":"Auth middleware refactor, token refresh fix.","analysis":["Could originate in TTL config, refresh logic, or clock skew.","Recent auth middleware refactor may have introduced the regression."],"relevant_rules":[1,2,3],"relevant_constraints":[],"relevant_anti_patterns":[],"clarification":[]}
 
 Developer request: "how does the caching system work?"
 
-{"type":"question","intent":"Explain caching architecture, key strategy, and invalidation.","recent_activity":"","analysis":["Spans cache/ and pipeline/ packages."],"relevant_rules":[],"relevant_anti_patterns":[],"clarification":[]}
+{"type":"question","intent":"Explain caching architecture, key strategy, and invalidation.","recent_activity":"","analysis":["Spans cache/ and pipeline/ packages."],"relevant_rules":[],"relevant_constraints":[],"relevant_anti_patterns":[],"clarification":[]}
 
 Output ONLY valid JSON. No explanation, no markdown, no preamble.

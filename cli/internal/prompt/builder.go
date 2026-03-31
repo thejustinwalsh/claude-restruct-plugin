@@ -21,17 +21,21 @@ func NewBuilder(maxTokens int) *Builder {
 	}
 }
 
-// ParsedRules holds rules split into process rules (always included)
-// and context rules (numbered for LLM selection).
+// ParsedRules holds rules split by semantic category.
+//
+//   - WorkflowRules: process steps, always injected for code changes (## Workflow)
+//   - ConstraintRules: design/architectural constraints, LLM-selected (## Constraints)
+//   - ContextRules: general project rules, LLM-selected (all other sections)
+//   - AntiPatterns: things to avoid, LLM-selected (## Do NOT)
 type ParsedRules struct {
-	ProcessRules []string // build, test, lint, verify commands
-	ContextRules []string // numbered context rules for LLM to select from
-	AntiPatterns []string // numbered anti-patterns for LLM to select from
+	WorkflowRules   []string // always injected for code_change/refactor/debug
+	ConstraintRules []string // LLM-selected design/architectural constraints
+	ContextRules    []string // LLM-selected context rules
+	AntiPatterns    []string // LLM-selected anti-patterns
 }
 
-// ParseRules splits raw rules content into process rules, context rules,
-// and anti-patterns. Returns the parsed structure and the formatted string
-// for the LLM (with numbered context rules and anti-patterns).
+// ParseRules splits raw rules content into workflow, constraints, context rules,
+// and anti-patterns based on section headers.
 func ParseRules(raw string) *ParsedRules {
 	if strings.TrimSpace(raw) == "" {
 		return &ParsedRules{}
@@ -45,16 +49,18 @@ func ParseRules(raw string) *ParsedRules {
 		trimmed := strings.TrimSpace(line)
 		lower := strings.ToLower(trimmed)
 
-		// "After Every Change" rules are verification guardrails —
-		// always injected, never LLM-selected. Everything else goes
-		// to context for LLM selection.
-		if strings.HasPrefix(lower, "## after every change") {
-			currentSection = "process"
+		// Section header detection — order matters for prefix matching
+		if strings.HasPrefix(lower, "## workflow") ||
+			strings.HasPrefix(lower, "## after every change") {
+			currentSection = "workflow"
+			continue
+		}
+		if strings.HasPrefix(lower, "## constraints") {
+			currentSection = "constraints"
 			continue
 		}
 		if strings.HasPrefix(lower, "## do not") ||
-			strings.HasPrefix(lower, "## don't") ||
-			strings.HasPrefix(lower, "## do not") {
+			strings.HasPrefix(lower, "## don't") {
 			currentSection = "anti"
 			continue
 		}
@@ -63,15 +69,17 @@ func ParseRules(raw string) *ParsedRules {
 			continue
 		}
 
-		// Collect lines based on section
+		// Collect bullet-point lines based on section
 		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
 			entry := strings.TrimLeft(trimmed, "-* ")
 			if entry == "" {
 				continue
 			}
 			switch currentSection {
-			case "process":
-				pr.ProcessRules = append(pr.ProcessRules, entry)
+			case "workflow":
+				pr.WorkflowRules = append(pr.WorkflowRules, entry)
+			case "constraints":
+				pr.ConstraintRules = append(pr.ConstraintRules, entry)
 			case "anti":
 				pr.AntiPatterns = append(pr.AntiPatterns, entry)
 			default:
@@ -84,8 +92,10 @@ func ParseRules(raw string) *ParsedRules {
 }
 
 // FormatForLLM returns the numbered rules string for the LLM user message.
+// Includes context rules, constraints, and anti-patterns — all LLM-selectable.
+// Workflow rules are NOT included here (they're always injected, not selected).
 func (pr *ParsedRules) FormatForLLM() string {
-	if len(pr.ContextRules) == 0 && len(pr.AntiPatterns) == 0 {
+	if len(pr.ContextRules) == 0 && len(pr.ConstraintRules) == 0 && len(pr.AntiPatterns) == 0 {
 		return ""
 	}
 
@@ -93,6 +103,12 @@ func (pr *ParsedRules) FormatForLLM() string {
 	if len(pr.ContextRules) > 0 {
 		sb.WriteString("## Project Rules (context — select by number)\n")
 		for i, r := range pr.ContextRules {
+			fmt.Fprintf(&sb, "%d. %s\n", i+1, r)
+		}
+	}
+	if len(pr.ConstraintRules) > 0 {
+		sb.WriteString("\n## Constraints (design/architectural — select by number)\n")
+		for i, r := range pr.ConstraintRules {
 			fmt.Fprintf(&sb, "%d. %s\n", i+1, r)
 		}
 	}

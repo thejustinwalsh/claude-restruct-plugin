@@ -77,10 +77,14 @@ func New(database *db.DB, port string, devMode bool, webFS fs.FS, version string
 
 		r.Get("/stream/active", s.handleStreamActive)
 		r.Get("/stream/buffer/{id}", s.handleStreamBuffer)
+		r.Post("/stream/input", s.handleStreamInput)
+		r.Post("/stream/complete", s.handleStreamComplete)
 		r.Post("/stream/start", s.handleStreamStart)
 		r.Post("/stream/token", s.handleStreamToken)
 		r.Post("/stream/done", s.handleStreamDone)
 		r.Post("/stream/error", s.handleStreamError)
+
+		r.Post("/verification", s.handleVerificationEvent)
 	})
 
 	// Serve embedded SPA in production (non-dev mode)
@@ -196,13 +200,15 @@ func (s *Server) pollForUpdates(ctx context.Context) {
 				continue
 			}
 			for _, r := range refs {
-				// Include pipeline events so the frontend doesn't need to refetch
+				// Include pipeline events and verification events
 				events, _ := s.db.GetPipelineEvents(r.ID)
+				verifications, _ := s.db.GetVerificationEventsForRefinement(r.ID)
 				s.hub.Broadcast(sse.Event{
 					Type: "refinement:new",
 					Data: map[string]interface{}{
-						"refinement": r,
-						"events":     events,
+						"refinement":    r,
+						"events":        events,
+						"verifications": verifications,
 					},
 				})
 				if r.ID > lastRefinementID {

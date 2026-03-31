@@ -5,12 +5,17 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import type { Refinement, PipelineEvent } from '@/api/client';
+import type {
+  Refinement,
+  PipelineEvent,
+  VerificationEvent,
+} from '@/api/client';
 import { api } from '@/api/client';
 
 export interface RefinementCompleteEvent {
   refinement: Refinement;
   events: PipelineEvent[] | null;
+  verifications: VerificationEvent[] | null;
 }
 
 export interface StreamStart {
@@ -36,8 +41,24 @@ export interface StreamError {
   error: string;
 }
 
+export interface StreamInput {
+  refinement_id: number;
+  input_prompt: string;
+}
+
+export interface StreamComplete {
+  refinement_id: number;
+  refined_prompt: string;
+  llm_output: string;
+  latency_ms: number;
+  timings: { stage: string; duration_us: number }[];
+}
+
 export type SSEEvent =
   | { type: 'refinement:new'; data: RefinementCompleteEvent }
+  | { type: 'verification:new'; data: VerificationEvent }
+  | { type: 'refinement:input'; data: StreamInput }
+  | { type: 'refinement:complete'; data: StreamComplete }
   | { type: 'refinement:stream-start'; data: StreamStart }
   | { type: 'refinement:streaming'; data: StreamToken }
   | { type: 'refinement:stream-end'; data: StreamEnd }
@@ -145,6 +166,9 @@ function connect() {
   });
 
   listen('refinement:new');
+  listen('refinement:input');
+  listen('refinement:complete');
+  listen('verification:new');
   listen('refinement:stream-start');
   listen('refinement:streaming');
   listen('refinement:stream-end');

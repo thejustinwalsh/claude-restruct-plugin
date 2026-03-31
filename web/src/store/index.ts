@@ -12,6 +12,7 @@ import type {
   Metrics,
   Refinement,
   PipelineEvent,
+  VerificationEvent,
   Session,
   StatsData,
 } from '@/api/client';
@@ -34,6 +35,7 @@ export interface StreamState {
 interface RefinementDetail {
   refinement: Refinement;
   events: PipelineEvent[];
+  verifications: VerificationEvent[];
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +77,11 @@ interface AppState {
   streamError: (id: number, error: string) => void;
 
   // Refinement actions
-  upsertRefinement: (r: Refinement, events?: PipelineEvent[] | null) => void;
+  upsertRefinement: (
+    r: Refinement,
+    events?: PipelineEvent[] | null,
+    verifications?: VerificationEvent[] | null,
+  ) => void;
   setRefinementDetail: (id: number, detail: RefinementDetail) => void;
 
   // Fetch actions (talk to API, update store)
@@ -131,7 +137,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // Also populate refinementDetails so the detail page can render immediately
     const details = new Map(get().refinementDetails);
-    details.set(id, { refinement: pending, events: [] });
+    details.set(id, { refinement: pending, events: [], verifications: [] });
 
     set({
       stream: {
@@ -169,7 +175,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // -- Refinements --
 
-  upsertRefinement: (r, events) => {
+  upsertRefinement: (r, events, verifications) => {
     const refs = new Map(get().refinements);
     refs.set(r.id, r);
     const next: Partial<AppState> = { refinements: refs };
@@ -177,7 +183,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     // If events provided, update detail cache too
     if (events) {
       const details = new Map(get().refinementDetails);
-      details.set(r.id, { refinement: r, events });
+      details.set(r.id, {
+        refinement: r,
+        events,
+        verifications: verifications ?? [],
+      });
       next.refinementDetails = details;
     } else {
       // Update the refinement in existing detail if cached
@@ -412,10 +422,90 @@ function handleSSEEvent(evt: SSEEvent) {
     case 'refinement:stream-error':
       s.streamError(evt.data.refinement_id, evt.data.error);
       break;
+    case 'refinement:input': {
+      // Step 2: LLM input prompt is ready (before inference starts)
+      const refId = evt.data.refinement_id;
+      const refs = new Map(s.refinements);
+      const existing = refs.get(refId);
+      if (existing) {
+        refs.set(refId, { ...existing, input_prompt: evt.data.input_prompt });
+        const details = new Map(s.refinementDetails);
+        const detail = details.get(refId);
+        if (detail) {
+          details.set(refId, {
+            ...detail,
+            refinement: {
+              ...detail.refinement,
+              input_prompt: evt.data.input_prompt,
+            },
+          });
+        }
+        useAppStore.setState({ refinements: refs, refinementDetails: details });
+      }
+      break;
+    }
+    case 'refinement:complete': {
+      // Step 4: Final context + pipeline timings
+      const refId = evt.data.refinement_id;
+      const refs = new Map(s.refinements);
+      const existing = refs.get(refId);
+      if (existing) {
+        const updated = {
+          ...existing,
+          refined_prompt: evt.data.refined_prompt,
+          llm_output: evt.data.llm_output,
+          latency_ms: evt.data.latency_ms,
+          status: 'complete' as const,
+        };
+        refs.set(refId, updated);
+        const details = new Map(s.refinementDetails);
+        const detail = details.get(refId);
+        if (detail) {
+          const events = evt.data.timings.map(
+            (t: { stage: string; duration_us: number }, i: number) => ({
+              id: -(i + 1), // temp negative IDs until poller replaces
+              refinement_id: refId,
+              stage: t.stage,
+              duration_us: t.duration_us,
+              success: true,
+              metadata: '',
+              created_at: new Date().toISOString(),
+            }),
+          );
+          details.set(refId, { ...detail, refinement: updated, events });
+        }
+        useAppStore.setState({
+          refinements: refs,
+          refinementDetails: details,
+          stream: null,
+        });
+      }
+      break;
+    }
     case 'refinement:new':
-      s.upsertRefinement(evt.data.refinement, evt.data.events);
+      s.upsertRefinement(
+        evt.data.refinement,
+        evt.data.events,
+        evt.data.verifications,
+      );
       s.fetchMetrics();
       break;
+    case 'verification:new': {
+      // Append verification event to the correct refinement's detail cache
+      const refId = evt.data.refinement_id;
+      if (refId) {
+        const details = new Map(s.refinementDetails);
+        const existing = details.get(refId);
+        if (existing) {
+          details.set(refId, {
+            ...existing,
+            verifications: [...existing.verifications, evt.data],
+          });
+          useAppStore.setState({ refinementDetails: details });
+        }
+      }
+      break;
+    }
   }
 }
 

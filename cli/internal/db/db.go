@@ -575,6 +575,72 @@ func (d *DB) GetSessionStats(limit int) ([]SessionStat, error) {
 	return stats, rows.Err()
 }
 
+// --- Verification event operations ---
+
+type VerificationEvent struct {
+	ID           int64     `json:"id"`
+	SessionID    string    `json:"session_id"`
+	RefinementID *int64    `json:"refinement_id,omitempty"`
+	Scope        string    `json:"scope"`
+	HookEvent    string    `json:"hook_event"`
+	EventType    string    `json:"event_type"`
+	FileCount    *int      `json:"file_count,omitempty"`
+	DurationUs   *int64    `json:"duration_us,omitempty"`
+	CwdInput     string    `json:"cwd_input"`
+	ProjectDir   string    `json:"project_dir"`
+	ChangedFiles *string   `json:"changed_files,omitempty"`
+	ChecksRun    *string   `json:"checks_run,omitempty"`
+	Result       *string   `json:"result,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+func (d *DB) InsertVerificationEvent(e *VerificationEvent) error {
+	_, err := d.pool.Exec(`
+		INSERT INTO verification_events (session_id, refinement_id, scope, hook_event, event_type, file_count, duration_us, cwd_input, project_dir, changed_files, checks_run, result)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.SessionID, e.RefinementID, e.Scope, e.HookEvent, e.EventType, e.FileCount, e.DurationUs,
+		e.CwdInput, e.ProjectDir, e.ChangedFiles, e.ChecksRun, e.Result,
+	)
+	return err
+}
+
+// LatestRefinementID returns the most recent refinement ID for a session.
+// Returns 0 if no refinements exist. Used to link verification events
+// to the refinement that triggered them.
+func (d *DB) LatestRefinementID(sessionID string) int64 {
+	var id int64
+	d.pool.QueryRow(
+		"SELECT COALESCE(MAX(id), 0) FROM refinements WHERE session_id = ?",
+		sessionID,
+	).Scan(&id)
+	return id
+}
+
+// GetVerificationEventsForRefinement returns verification events linked to
+// a specific refinement. This scopes events to the prompt cycle that
+// produced this refinement (UserPromptSubmit → Stop).
+func (d *DB) GetVerificationEventsForRefinement(refinementID int64) ([]VerificationEvent, error) {
+	rows, err := d.pool.Query(`
+		SELECT id, session_id, refinement_id, scope, hook_event, event_type, file_count, duration_us, cwd_input, project_dir, changed_files, checks_run, result, created_at
+		FROM verification_events WHERE refinement_id = ? ORDER BY created_at ASC`, refinementID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []VerificationEvent
+	for rows.Next() {
+		var e VerificationEvent
+		if err := rows.Scan(&e.ID, &e.SessionID, &e.RefinementID, &e.Scope, &e.HookEvent, &e.EventType,
+			&e.FileCount, &e.DurationUs, &e.CwdInput, &e.ProjectDir,
+			&e.ChangedFiles, &e.ChecksRun, &e.Result, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
 func (d *DB) GetMetrics() (*Metrics, error) {
 	m := &Metrics{}
 	d.pool.QueryRow("SELECT COUNT(*) FROM sessions").Scan(&m.TotalSessions)

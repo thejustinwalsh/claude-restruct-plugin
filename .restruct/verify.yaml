@@ -1,0 +1,17 @@
+checks:
+  - name: test
+    command: "pnpm test"
+
+  - name: build
+    command: "pnpm build"
+
+  - name: typecheck
+    command: "pnpm --filter web exec tsc --noEmit"
+    globs:
+      - "web/**/*.ts"
+      - "web/**/*.tsx"
+
+  - name: go-vet
+    command: "pnpm --filter @restruct/cli exec go vet ./..."
+    globs:
+      - "cli/**/*.go"

@@ -1,7 +1,7 @@
 {
   "name": "restruct",
   "description": "Meta-prompt refinement via local LLM — transforms casual prompts into structured, rules-aware agent instructions",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -38,6 +38,39 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct session end",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "TaskCreated": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct snapshot",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct verify",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct verify",
+            "timeout": 120
           }
         ]
       }

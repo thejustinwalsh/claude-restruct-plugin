@@ -70,14 +70,15 @@ const NoContextSentinel = "NO_ADDITIONAL_CONTEXT"
 
 // Pipeline orchestrates the prompt refinement process.
 type Pipeline struct {
-	llm       LLMClient
-	rules     RulesLoader
-	git       GitProvider
-	session   SessionProvider
-	sessionID string
-	builder   *prompt.Builder
-	cache     CacheStore
-	cfg       *config.Config
+	llm            LLMClient
+	rules          RulesLoader
+	git            GitProvider
+	session        SessionProvider
+	sessionID      string
+	builder        *prompt.Builder
+	cache          CacheStore
+	cfg            *config.Config
+	onInputReady   func(inputPrompt string) // called after prompt build, before LLM inference
 }
 
 // New creates a Pipeline from the given configuration.
@@ -110,6 +111,12 @@ func New(cfg *config.Config, cwd string) (*Pipeline, error) {
 func (p *Pipeline) SetSessionProvider(sp SessionProvider, sessionID string) {
 	p.session = sp
 	p.sessionID = sessionID
+}
+
+// SetInputReadyCallback sets a function called after the LLM prompt is built
+// but before inference starts. Used to broadcast the input prompt in real-time.
+func (p *Pipeline) SetInputReadyCallback(fn func(inputPrompt string)) {
+	p.onInputReady = fn
 }
 
 // NewWithDeps creates a Pipeline with injected dependencies (for testing).
@@ -213,6 +220,11 @@ func (p *Pipeline) Refine(ctx context.Context, rawPrompt string, sink ollama.Tok
 	})
 	result.InputPrompt = "## System Prompt\n" + buildResult.SystemMsg + "\n\n## User Message\n" + buildResult.UserMsg
 
+	// Notify that the input prompt is ready (for real-time broadcast)
+	if p.onInputReady != nil {
+		p.onInputReady(result.InputPrompt)
+	}
+
 	// 7. Check Ollama availability
 	timer("ollama_check", func() {
 		if !p.llm.IsAvailable(ctx) {
@@ -303,13 +315,14 @@ func (p *Pipeline) Refine(ctx context.Context, rawPrompt string, sink ollama.Tok
 
 // LLMClassification is the JSON structure the local LLM produces.
 type LLMClassification struct {
-	Type              string   `json:"type"`
-	Intent            string   `json:"intent"`
-	RecentActivity    string   `json:"recent_activity"`
-	Analysis          []string `json:"analysis"`
-	RelevantRules     []int    `json:"relevant_rules"`
-	RelevantAntiPats  []int    `json:"relevant_anti_patterns"`
-	Clarification     []string `json:"clarification"`
+	Type                 string   `json:"type"`
+	Intent               string   `json:"intent"`
+	RecentActivity       string   `json:"recent_activity"`
+	Analysis             []string `json:"analysis"`
+	RelevantRules        []int    `json:"relevant_rules"`
+	RelevantConstraints  []int    `json:"relevant_constraints"`
+	RelevantAntiPats     []int    `json:"relevant_anti_patterns"`
+	Clarification        []string `json:"clarification"`
 }
 
 // validTypes is the set of recognized request types.

@@ -144,11 +144,27 @@ Assemble the file using this template. Omit any section with no content.
 ## Environment
 {required env vars, services, setup steps that aren't in README}
 
+## Workflow
+- If you added new behavior, add or update tests to cover it
+- {other process steps — e.g., "Prefer focused unit tests", "Add a regression test before fixing a bug"}
+
+## Constraints
+- {design/architectural constraints — e.g., "Performance is critical", "All operations must go through the CLI"}
+
 ## Do NOT
 - {specific anti-pattern from user interview or codebase analysis}
 - {another specific anti-pattern}
 - {etc — 3-5 items max}
 ```
+
+**Important:** Do NOT include build/test/lint verification commands (like
+"run tests after every change") in any section. These are discovered and
+enforced automatically by `.restruct/verify.yaml`.
+
+**Section semantics:**
+- **Workflow** — process steps Claude should follow (always shown for code changes)
+- **Constraints** — design/architectural rules that apply selectively (shown when relevant)
+- **Do NOT** — things to avoid (shown when relevant)
 
 ### Rules for the output:
 - **No codebase overview or file tree** — agents find files without them

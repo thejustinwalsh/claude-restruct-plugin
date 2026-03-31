@@ -44,7 +44,7 @@ var sessionStartCmd = &cobra.Command{
 			slog.Warn("db open failed", "error", err)
 		} else {
 			defer database.Close()
-			recorder := db.NewRecorder(database)
+			recorder := db.NewRecorder(database, "")
 			recorder.RecordSession(input.SessionID, cwd, input.TranscriptPath)
 		}
 
@@ -84,7 +84,7 @@ var sessionEndCmd = &cobra.Command{
 			slog.Warn("db open failed", "error", err)
 		} else {
 			defer database.Close()
-			recorder := db.NewRecorder(database)
+			recorder := db.NewRecorder(database, "")
 			recorder.EndSession(input.SessionID)
 		}
 

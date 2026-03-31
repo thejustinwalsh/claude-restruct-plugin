@@ -1,19 +1,27 @@
 package db
 
 import (
+	"bytes"
+	"encoding/json"
 	"log/slog"
+	"net/http"
 	"time"
 )
 
-// Recorder writes refinement telemetry to SQLite.
-// Used by the pipeline to record every step.
+// Recorder writes telemetry to SQLite and broadcasts events to the
+// restruct server for real-time SSE delivery. Every Record* method
+// writes to DB first, then broadcasts — callers never need to think
+// about event delivery.
 type Recorder struct {
-	db *DB
+	db        *DB
+	serverURL string // empty = no broadcasting (tests, offline)
 }
 
 // NewRecorder creates a Recorder backed by the given database.
-func NewRecorder(database *DB) *Recorder {
-	return &Recorder{db: database}
+// If serverURL is non-empty, verification events are broadcast
+// to the server for SSE delivery after each DB write.
+func NewRecorder(database *DB, serverURL string) *Recorder {
+	return &Recorder{db: database, serverURL: serverURL}
 }
 
 // RecordSession ensures a session record exists.
@@ -78,6 +86,66 @@ func (r *Recorder) RecordPipelineEvent(refinementID int64, stage string, duratio
 	}
 }
 
+// RecordSnapshot records a snapshot verification event and broadcasts it.
+func (r *Recorder) RecordSnapshot(sessionID string, refinementID int64, scope, hookEvent, cwdInput, projectDir string, fileCount int, durationUs int64) {
+	if sessionID == "" {
+		return
+	}
+	var refID *int64
+	if refinementID > 0 {
+		refID = &refinementID
+	}
+	e := &VerificationEvent{
+		SessionID:    sessionID,
+		RefinementID: refID,
+		Scope:        scope,
+		HookEvent:    hookEvent,
+		EventType:    "snapshot",
+		FileCount:    &fileCount,
+		DurationUs:   &durationUs,
+		CwdInput:     cwdInput,
+		ProjectDir:   projectDir,
+	}
+	if err := r.db.InsertVerificationEvent(e); err != nil {
+		slog.Warn("failed to record snapshot event", "error", err)
+		return
+	}
+	r.broadcastVerification(e)
+}
+
+// RecordVerification records a verify event and broadcasts it.
+func (r *Recorder) RecordVerification(sessionID string, refinementID int64, scope, hookEvent, cwdInput, projectDir, changedFilesJSON, checksRunJSON, result string, durationUs int64) {
+	if sessionID == "" {
+		return
+	}
+	var refID *int64
+	if refinementID > 0 {
+		refID = &refinementID
+	}
+	e := &VerificationEvent{
+		SessionID:    sessionID,
+		RefinementID: refID,
+		Scope:        scope,
+		HookEvent:    hookEvent,
+		EventType:    "verify",
+		DurationUs:   &durationUs,
+		CwdInput:     cwdInput,
+		ProjectDir:   projectDir,
+		Result:       &result,
+	}
+	if changedFilesJSON != "" {
+		e.ChangedFiles = &changedFilesJSON
+	}
+	if checksRunJSON != "" {
+		e.ChecksRun = &checksRunJSON
+	}
+	if err := r.db.InsertVerificationEvent(e); err != nil {
+		slog.Warn("failed to record verification event", "error", err)
+		return
+	}
+	r.broadcastVerification(e)
+}
+
 // EndSession marks a session as ended.
 func (r *Recorder) EndSession(sessionID string) {
 	if sessionID == "" {
@@ -86,4 +154,23 @@ func (r *Recorder) EndSession(sessionID string) {
 	if err := r.db.EndSession(sessionID); err != nil {
 		slog.Warn("failed to end session", "error", err)
 	}
+}
+
+// broadcastVerification POSTs a verification event to the server for SSE delivery.
+// Best-effort: failures are logged, never block the caller.
+func (r *Recorder) broadcastVerification(e *VerificationEvent) {
+	if r.serverURL == "" {
+		return
+	}
+	data, err := json.Marshal(e)
+	if err != nil {
+		return
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Post(r.serverURL+"/api/verification", "application/json", bytes.NewReader(data))
+	if err != nil {
+		slog.Debug("broadcast verification: post error", "error", err)
+		return
+	}
+	resp.Body.Close()
 }

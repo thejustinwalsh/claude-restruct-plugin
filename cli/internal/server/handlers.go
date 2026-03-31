@@ -131,11 +131,16 @@ func (s *Server) handleGetRefinement(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Include pipeline events
+	// Include pipeline events and verification events
 	events, _ := s.db.GetPipelineEvents(id)
+	verifications, _ := s.db.GetVerificationEventsForRefinement(id)
+	if verifications == nil {
+		verifications = []db.VerificationEvent{}
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"refinement": ref,
-		"events":     events,
+		"refinement":    ref,
+		"events":        events,
+		"verifications": verifications,
 	})
 }
 
@@ -203,6 +208,35 @@ func (s *Server) handleStreamBuffer(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stream)
 }
 
+func (s *Server) handleStreamInput(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		RefinementID int64  `json:"refinement_id"`
+		InputPrompt  string `json:"input_prompt"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	s.hub.Broadcast(sse.Event{Type: "refinement:input", Data: payload})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleStreamComplete(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		RefinementID  int64                    `json:"refinement_id"`
+		RefinedPrompt string                   `json:"refined_prompt"`
+		LLMOutput     string                   `json:"llm_output"`
+		LatencyMs     int64                    `json:"latency_ms"`
+		Timings       []map[string]interface{} `json:"timings"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	s.hub.Broadcast(sse.Event{Type: "refinement:complete", Data: payload})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleStreamStart(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		RefinementID int64  `json:"refinement_id"`
@@ -259,5 +293,15 @@ func (s *Server) handleStreamError(w http.ResponseWriter, r *http.Request) {
 	}
 	s.streamBuf.SetError(payload.RefinementID, payload.Error)
 	s.hub.Broadcast(sse.Event{Type: "refinement:stream-error", Data: payload})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleVerificationEvent(w http.ResponseWriter, r *http.Request) {
+	var payload db.VerificationEvent
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	s.hub.Broadcast(sse.Event{Type: "verification:new", Data: payload})
 	w.WriteHeader(http.StatusNoContent)
 }

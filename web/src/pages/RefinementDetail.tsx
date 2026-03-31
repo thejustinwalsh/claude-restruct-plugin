@@ -7,12 +7,15 @@ import {
   useActions,
 } from '@/store';
 import type { StreamState } from '@/store';
-import type { PipelineEvent } from '@/api/client';
+import type { PipelineEvent, VerificationEvent, CheckRun } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
-import { XmlHighlight } from '@/components/XmlHighlight';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Streamdown, type ThemeInput } from 'streamdown';
+import { code } from '@streamdown/code';
+
+const shikiTheme: [ThemeInput, ThemeInput] = ['night-owl-light', 'night-owl'];
 
 // Stage colors for the waterfall chart
 const stageColors: Record<string, string> = {
@@ -38,8 +41,6 @@ function PipelineTimeline({ events }: { events: PipelineEvent[] }) {
 
   const totalUs = events.reduce((sum, e) => sum + e.duration_us, 0);
 
-  // Compute display widths: each stage gets at least MIN_PCT so tiny stages
-  // are visible, then normalize so all widths sum to exactly 100%.
   const MIN_PCT = 1;
   const rawPcts = events.map((e) =>
     totalUs > 0
@@ -49,7 +50,6 @@ function PipelineTimeline({ events }: { events: PipelineEvent[] }) {
   const rawSum = rawPcts.reduce((s, v) => s + v, 0);
   const displayPcts = rawPcts.map((p) => (p / rawSum) * 100);
 
-  // Build rows with cumulative left offsets
   const rows: { event: PipelineEvent; leftPct: number; widthPct: number }[] =
     [];
   let offset = 0;
@@ -138,6 +138,25 @@ function PipelineSkeleton() {
   );
 }
 
+// Wrap raw code in a markdown fenced code block for Streamdown rendering.
+// Strips existing fences first to prevent double-wrapping (LLMs sometimes
+// include fences in their output despite being told not to).
+function wrapInFence(text: string, lang: string): string {
+  let cleaned = text.trim();
+  // Strip existing markdown code fences
+  if (cleaned.startsWith('```')) {
+    const lines = cleaned.split('\n');
+    // Remove opening fence line
+    lines.shift();
+    // Remove closing fence line
+    if (lines.length > 0 && lines[lines.length - 1].trim() === '```') {
+      lines.pop();
+    }
+    cleaned = lines.join('\n');
+  }
+  return '```' + lang + '\n' + cleaned + '\n```';
+}
+
 function FlowStage({
   label,
   description,
@@ -149,11 +168,11 @@ function FlowStage({
   label: string;
   description: string;
   content: string | null;
-  format?: 'xml' | 'text';
+  format?: 'xml' | 'json' | 'markdown' | 'text';
   stream?: StreamState | null;
   status?: string;
 }) {
-  const scrollRef = useRef<HTMLPreElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (scrollRef.current && stream?.isStreaming) {
@@ -164,6 +183,37 @@ function FlowStage({
   const showStreaming =
     status === 'pending' && stream && (stream.isStreaming || stream.text);
 
+  function renderContent(text: string) {
+    // For code formats, wrap in a fenced code block so Streamdown + Shiki highlight it
+    if (format === 'json' || format === 'xml') {
+      return (
+        <div className="max-h-[500px] overflow-auto text-xs [&_pre]:!m-0 [&_pre]:!bg-transparent [&_pre]:!p-0">
+          <Streamdown mode="static" plugins={{ code }} shikiTheme={shikiTheme}>
+            {wrapInFence(text, format)}
+          </Streamdown>
+        </div>
+      );
+    }
+
+    // Markdown content — render directly with Streamdown
+    if (format === 'markdown') {
+      return (
+        <div className="prose-sm max-h-[500px] overflow-auto text-sm [&_pre]:text-xs">
+          <Streamdown mode="static" plugins={{ code }} shikiTheme={shikiTheme}>
+            {text}
+          </Streamdown>
+        </div>
+      );
+    }
+
+    // Plain text fallback
+    return (
+      <pre className="max-h-[500px] overflow-auto font-mono text-xs break-words whitespace-pre-wrap">
+        {text}
+      </pre>
+    );
+  }
+
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -172,17 +222,13 @@ function FlowStage({
       </CardHeader>
       <CardContent>
         {content ? (
-          <pre className="bg-muted max-h-[500px] overflow-auto rounded-lg p-4 font-mono text-xs break-words whitespace-pre-wrap">
-            {format === 'xml' ? <XmlHighlight code={content} /> : content}
-          </pre>
+          renderContent(content)
         ) : showStreaming ? (
-          <pre
-            ref={scrollRef}
-            className="bg-muted max-h-[500px] overflow-auto rounded-lg p-4 font-mono text-xs break-words whitespace-pre-wrap"
-          >
-            {stream.text || 'Processing...'}
-            {stream.isStreaming && <span className="animate-pulse">▌</span>}
-          </pre>
+          <div ref={scrollRef} className="max-h-[500px] overflow-auto text-sm">
+            <Streamdown plugins={{ code }} shikiTheme={shikiTheme} isAnimating>
+              {stream.text || 'Processing...'}
+            </Streamdown>
+          </div>
         ) : status === 'pending' ? (
           <div className="space-y-2 p-4">
             <Skeleton className="h-3 w-full" />
@@ -214,6 +260,235 @@ function MetricSkeleton() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Data Flow tab content
+// ---------------------------------------------------------------------------
+
+function DataFlowTab({
+  r,
+  activeStream,
+}: {
+  r: {
+    raw_prompt: string;
+    input_prompt: string | null;
+    llm_output: string | null;
+    refined_prompt: string | null;
+    status: string;
+  };
+  activeStream: StreamState | null;
+}) {
+  return (
+    <div className="space-y-4">
+      <FlowStage
+        label="1. User Prompt"
+        description="What the developer typed in Claude Code"
+        content={r.raw_prompt}
+        format="markdown"
+      />
+
+      <FlowStage
+        label="2. LLM Input"
+        description="System prompt + assembled user message sent to local Ollama model"
+        content={r.input_prompt}
+        format="markdown"
+        status={r.status}
+      />
+
+      <FlowStage
+        label="3. LLM Output"
+        description="Raw response from the local model (JSON classification)"
+        content={r.llm_output}
+        format="json"
+        stream={activeStream}
+        status={r.status}
+      />
+
+      <FlowStage
+        label="4. Final Context (additionalContext)"
+        description="Composed XML injected into Claude's context window"
+        content={r.refined_prompt}
+        format="xml"
+        status={r.status}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Verification tab content
+// ---------------------------------------------------------------------------
+
+function parseJSON<T>(s: string | null): T | null {
+  if (!s) return null;
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+function VerificationTab({
+  verifications,
+}: {
+  verifications: VerificationEvent[];
+}) {
+  if (!verifications || verifications.length === 0) {
+    return (
+      <p className="text-muted-foreground py-8 text-center text-sm">
+        No verification events recorded for this session.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {verifications.map((v) => {
+        const isSnapshot = v.event_type === 'snapshot';
+        const changedFiles = parseJSON<string[]>(v.changed_files);
+        const checksRun = parseJSON<CheckRun[]>(v.checks_run);
+        const cwdMismatch = v.cwd_input !== v.project_dir;
+
+        return (
+          <Card key={v.id}>
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-3">
+                <span className="text-lg">
+                  {isSnapshot
+                    ? '\u{1F4F7}'
+                    : v.result === 'pass'
+                      ? '\u2705'
+                      : v.result === 'fail'
+                        ? '\u274C'
+                        : '\u23ED\uFE0F'}
+                </span>
+
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">
+                      {isSnapshot ? 'Snapshot' : 'Verify'}
+                    </span>
+                    <Badge variant="outline" className="text-xs">
+                      {v.hook_event}
+                    </Badge>
+                    {v.scope !== 'prompt' && (
+                      <Badge variant="secondary" className="text-xs">
+                        task: {v.scope.slice(0, 8)}
+                      </Badge>
+                    )}
+                    {!isSnapshot && v.result && (
+                      <Badge
+                        variant={
+                          v.result === 'pass'
+                            ? 'default'
+                            : v.result === 'fail'
+                              ? 'destructive'
+                              : 'secondary'
+                        }
+                        className="text-xs"
+                      >
+                        {v.result}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="text-muted-foreground mt-1 flex gap-3 text-xs">
+                    <span>{new Date(v.created_at).toLocaleTimeString()}</span>
+                    {v.duration_us != null && (
+                      <span>{formatDuration(v.duration_us)}</span>
+                    )}
+                    {isSnapshot && v.file_count != null && (
+                      <span>{v.file_count} files tracked</span>
+                    )}
+                    {changedFiles && (
+                      <span>{changedFiles.length} files changed</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {changedFiles && changedFiles.length > 0 && (
+                <details className="mt-3">
+                  <summary className="text-muted-foreground cursor-pointer text-xs">
+                    Changed files ({changedFiles.length})
+                  </summary>
+                  <div className="bg-muted mt-1 max-h-40 overflow-auto rounded p-2 font-mono text-xs">
+                    {changedFiles.map((f) => (
+                      <div key={f}>{f}</div>
+                    ))}
+                  </div>
+                </details>
+              )}
+
+              {checksRun && checksRun.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {checksRun.map((check) => (
+                    <div
+                      key={check.name}
+                      className="border-muted rounded border p-2"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant={check.passed ? 'default' : 'destructive'}
+                          className="text-xs"
+                        >
+                          {check.passed ? 'pass' : 'fail'}
+                        </Badge>
+                        <span className="text-sm font-medium">
+                          {check.name}
+                        </span>
+                        <span className="text-muted-foreground font-mono text-xs">
+                          {check.duration_ms}ms
+                        </span>
+                      </div>
+                      <div className="text-muted-foreground mt-1 font-mono text-xs">
+                        $ {check.command}
+                      </div>
+                      {check.output && !check.passed && (
+                        <details className="mt-1">
+                          <summary className="text-destructive cursor-pointer text-xs">
+                            Error output
+                          </summary>
+                          <pre className="bg-muted mt-1 max-h-60 overflow-auto rounded p-2 font-mono text-xs break-words whitespace-pre-wrap">
+                            {check.output}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {cwdMismatch ? (
+                <div className="mt-2 rounded bg-yellow-500/10 p-2 text-xs">
+                  <span className="font-medium text-yellow-700 dark:text-yellow-400">
+                    CWD mismatch
+                  </span>
+                  <div className="text-muted-foreground mt-1 space-y-0.5 font-mono">
+                    <div>
+                      cwd (hook input): <code>{v.cwd_input}</code>
+                    </div>
+                    <div>
+                      project root (CLAUDE_PROJECT_DIR):{' '}
+                      <code>{v.project_dir}</code>
+                    </div>
+                  </div>
+                </div>
+              ) : v.cwd_input && v.project_dir ? (
+                <div className="text-muted-foreground mt-2 font-mono text-xs">
+                  project: {v.project_dir}
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
 export function RefinementDetail({
   id,
   onBack,
@@ -226,11 +501,11 @@ export function RefinementDetail({
   const stream = useStream();
   const { fetchRefinement } = useActions();
 
-  // Fetch full detail on mount + retry periodically for pending refinements
   useEffect(() => {
     fetchRefinement(id);
 
-    // For pending refinements, poll for completion so detail fills in
+    // Poll only while pending — once complete, verification events
+    // arrive via SSE broadcast (verification:new).
     const interval = setInterval(() => {
       const current = useAppStore.getState().refinements.get(id);
       if (current && current.status === 'pending') {
@@ -243,11 +518,9 @@ export function RefinementDetail({
     return () => clearInterval(interval);
   }, [id, fetchRefinement]);
 
-  // Use full detail if available, otherwise fall back to partial data from the refinement map
   const r = detail?.refinement ?? refinement;
   const events = detail?.events ?? null;
 
-  // Nothing at all — truly unknown refinement
   if (!r) {
     return (
       <div className="space-y-6">
@@ -273,9 +546,11 @@ export function RefinementDetail({
 
   const activeStream = stream && stream.refinementId === id ? stream : null;
   const isPending = r.status === 'pending';
+  const verifications = detail?.verifications ?? [];
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center gap-4">
         <button
           onClick={onBack}
@@ -302,6 +577,7 @@ export function RefinementDetail({
         </div>
       </div>
 
+      {/* Metrics row */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
@@ -357,6 +633,7 @@ export function RefinementDetail({
         </Card>
       </div>
 
+      {/* Pipeline timeline */}
       {events && events.length > 0 ? (
         <Card>
           <CardHeader>
@@ -370,38 +647,31 @@ export function RefinementDetail({
         <PipelineSkeleton />
       ) : null}
 
-      <Separator />
+      {/* Tabs: Data Flow (default) | Verification */}
+      <Tabs defaultValue="data-flow">
+        <TabsList>
+          <TabsTrigger value="data-flow">Data Flow</TabsTrigger>
+          <TabsTrigger value="verification">
+            Verification
+            {verifications.length > 0 && (
+              <Badge
+                variant="secondary"
+                className="ml-1.5 px-1.5 py-0 text-[10px]"
+              >
+                {verifications.length}
+              </Badge>
+            )}
+          </TabsTrigger>
+        </TabsList>
 
-      <h2 className="text-lg font-semibold">Data Flow</h2>
+        <TabsContent value="data-flow" className="mt-4">
+          <DataFlowTab r={r} activeStream={activeStream} />
+        </TabsContent>
 
-      <FlowStage
-        label="1. User Prompt"
-        description="What the developer typed in Claude Code"
-        content={r.raw_prompt}
-      />
-
-      <FlowStage
-        label="2. LLM Input"
-        description="System prompt + assembled user message sent to local Ollama model"
-        content={r.input_prompt}
-        status={r.status}
-      />
-
-      <FlowStage
-        label="3. LLM Output"
-        description="Raw response from the local model (JSON classification)"
-        content={r.llm_output}
-        stream={activeStream}
-        status={r.status}
-      />
-
-      <FlowStage
-        label="4. Final Context (additionalContext)"
-        description="Composed XML injected into Claude's context window"
-        content={r.refined_prompt}
-        format="xml"
-        status={r.status}
-      />
+        <TabsContent value="verification" className="mt-4">
+          <VerificationTab verifications={verifications} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

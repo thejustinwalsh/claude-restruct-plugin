@@ -3,7 +3,10 @@ import type { StreamState } from '@/store';
 import type { Refinement } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { XmlHighlight } from '@/components/XmlHighlight';
+import { Streamdown, type ThemeInput } from 'streamdown';
+import { code } from '@streamdown/code';
+
+const shikiTheme: [ThemeInput, ThemeInput] = ['night-owl-light', 'night-owl'];
 
 interface Props {
   stream: StreamState | null;
@@ -11,7 +14,7 @@ interface Props {
 }
 
 export function StreamingCard({ stream, lastRefinement }: Props) {
-  const scrollRef = useRef<HTMLPreElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll during streaming
   useEffect(() => {
@@ -51,17 +54,22 @@ export function StreamingCard({ stream, lastRefinement }: Props) {
           {stream.error ? (
             <p className="text-destructive text-sm">{stream.error}</p>
           ) : (
-            <pre
+            <div
               ref={scrollRef}
-              className="bg-muted/50 max-h-[400px] overflow-y-auto rounded-md p-4 font-mono text-sm whitespace-pre-wrap"
+              className="max-h-[400px] overflow-y-auto rounded-md text-sm"
             >
-              <XmlHighlight
-                code={
-                  stream.text || (stream.isStreaming ? 'Processing...' : '')
-                }
-              />
-              {stream.isStreaming && <span className="animate-pulse">▌</span>}
-            </pre>
+              <Streamdown
+                plugins={{ code }}
+                shikiTheme={shikiTheme}
+                isAnimating={stream.isStreaming}
+              >
+                {stream.text
+                  ? '```json\n' + stream.text + '\n```'
+                  : stream.isStreaming
+                    ? 'Processing...'
+                    : ''}
+              </Streamdown>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -104,9 +112,15 @@ export function StreamingCard({ stream, lastRefinement }: Props) {
         </CardHeader>
         <CardContent>
           {hasOutput && lastRefinement.refined_prompt ? (
-            <pre className="bg-muted/50 max-h-[400px] overflow-y-auto rounded-md p-4 font-mono text-sm whitespace-pre-wrap">
-              <XmlHighlight code={lastRefinement.refined_prompt} />
-            </pre>
+            <div className="max-h-[400px] overflow-y-auto rounded-md text-sm">
+              <Streamdown
+                mode="static"
+                plugins={{ code }}
+                shikiTheme={shikiTheme}
+              >
+                {'```xml\n' + lastRefinement.refined_prompt + '\n```'}
+              </Streamdown>
+            </div>
           ) : lastRefinement.status === 'pending' ? (
             <p className="text-muted-foreground text-sm italic">
               Waiting for refinement to complete...
