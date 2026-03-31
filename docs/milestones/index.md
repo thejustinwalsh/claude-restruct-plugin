@@ -8,7 +8,7 @@ order: 800
 
 ## Overview
 
-11 milestones taking the scaffolded Go codebase to a production-ready Claude Code plugin with a monitoring dashboard and self-improvement capabilities. Each milestone has a dedicated spec file with detailed requirements.
+19 milestones taking the scaffolded Go codebase to a production-ready Claude Code plugin with a monitoring dashboard and self-improvement capabilities. Each milestone has a dedicated spec file with detailed requirements.
 
 ---
 
@@ -28,6 +28,14 @@ order: 800
 | M8.2 | [Verification System](M8.2-VERIFICATION.md) | **Done** | M1, M4 | Mechanical enforcement via hooks: snapshot on TaskCreated, verify on TaskCompleted/Stop, exit code 2 blocks task on failure. Per-project `.restruct/verify.yaml` config |
 | M9 | [Testing & Calibration](M9-TESTING.md) | **~50% Done** | M3, M4 | 213 tests across 13 packages. Integration tests use real CLAUDE.md + git. Needs eval framework, >80% coverage |
 | M10 | [Self-Improvement Loop](M10-SELF-IMPROVE.md) | Not Started | M4, M9 | Dashboard-driven feedback loop: rating analysis, system prompt refinement, rules suggestions |
+| M11 | [Project Bootstrap & Deep Context](M11-PROJECT-BOOTSTRAP.md) | Not Started | M1, M2, M5 | SessionStart scans CLAUDE.md files, generates deep-context docs in .restruct/links/, returns project map as additionalContext + watchPaths. Refinement uses retrieval-augmented rule selection |
+| M12 | [Smart Tool Permissions](M12-TOOL-PERMISSIONS.md) | Not Started | M1, M8 | PreToolUse hook auto-approves read-only + project-scoped tools, gates writes by auto-mode, detects network data exfiltration. Agent review for borderline cases. `.restruct/permissions.yaml` for allowed paths |
+| M13 | [Team Configuration](M13-TEAM-CONFIG.md) | Not Started | M7, M8 | Layered config: `.restruct/config.yaml` (team, checked in) → user config → env vars → plugin options (secrets). `restruct init` scaffolding. Selective `.gitignore` |
+| M14 | [Interactive Clarification](M14-INTERACTIVE-CLARIFICATION.md) | Not Started | M1, M2, M3 | Prompt Request Protocol surfaces LLM-detected ambiguity to user during hook execution. Answers folded into additionalContext. Eliminates Claude round-trip for ambiguous prompts |
+| M15 | [PostCompact Rule Persistence](M15-POSTCOMPACT-REINJECT.md) | Not Started | M1, M11 | Session-scoped rule statistics with generation counters track which rules matter. PostCompact hook reinjects top-scored rules with exponential decay weighting. PreCompact hint for compaction summary quality |
+| M16 | [Subagent Rule Alignment](M16-SUBAGENT-ALIGNMENT.md) | Not Started | M1, M11, M8.2 | SubagentStart injects tailored rules based on agent type + task context. Agent-type profiles (Explore/Plan/general). SubagentStop extends verification to subagent output |
+| M17 | [Tool Input Interception](M17-TOOL-INTERCEPT.md) | Not Started | M1, M11 | PreToolUse rewrites wrong package manager/build tool/test runner commands. Auto-discovered from lock files + user-editable corrections in config. Low priority |
+| M18 | [Verification Failure Guidance](M18-TEST-FAILURE-GUIDANCE.md) | Not Started | M1, M11 | PostToolUse injects behavioral directives when tests/linter/typecheck/vet fail. Prevents suppression shortcuts (nolint, as casts, ts-ignore). Links to relevant deep-context docs. Configurable command patterns |
 
 ---
 
@@ -234,11 +242,19 @@ M1  (Hook Protocol)        ██████████  Done
  │
  ├── M8.1 (Build System)   ██████████  Done
  │
- └── M8.2 (Verification)   ██████████  Done
-      │    (M1 + M4)
-      │
- M3 + M4 ──► M9  (Testing)      █████░░░░░  ~50%
-              └──► M10 (Self-Improve)  ░░░░░░░░░░
+ ├── M8.2 (Verification)   ██████████  Done
+ │    │    (M1 + M4)
+ │    │
+ │    M3 + M4 ──► M9  (Testing)      █████░░░░░  ~50%
+ │                └──► M10 (Self-Improve)  ░░░░░░░░░░
+ │
+ ├── M11 (Project Bootstrap)  ░░░░░░░░░░
+ │    (M1 + M2 + M5)
+ │    SessionStart deep-context, retrieval-augmented refinement
+ │
+ └── M12 (Tool Permissions)   ░░░░░░░░░░
+      (M1 + M8)
+      PreToolUse auto-approval, exfil detection, permissions.yaml
 ```
 
 **M1–M4, M8.1, and M8.2 are complete.** Major session changes: v4 JSON classification pipeline (M3), LLM-selected rules by index (M5), git stripped to branch+commits with LLM activity summary (M5), 4-panel web detail view with `input_prompt`/`llm_output` (M4), wouter routing (M4), compose.go extraction, dynamic footer, xmake build mode fix, mechanical verification via hooks (M8.2). M5 needs file mention detection. M6 needs SQLite cache migration. M9 at 213 tests with real-data integration tests.
