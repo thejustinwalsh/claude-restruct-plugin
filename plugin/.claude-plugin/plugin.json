@@ -85,6 +85,30 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct permit-log --event=executed",
+            "timeout": 1,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct permit-log --event=failed",
+            "timeout": 1,
+            "async": true
+          }
+        ]
+      }
     ]
   }
 }
