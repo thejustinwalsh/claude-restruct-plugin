@@ -41,9 +41,12 @@ fi
 
 # Resolve the binary path via xmake target metadata (strip ANSI codes)
 BIN=$("$XMAKE" show -t "$RUN_TARGET" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep targetfile | awk '{print $NF}')
-if [ -z "$BIN" ] || [ ! -f "$BIN" ]; then
-    echo "[watch] warning: could not resolve binary for $RUN_TARGET, using xmake run" >&2
-    BIN=""
+if [ -z "$BIN" ]; then
+    # Fallback: construct path manually
+    PLAT_SUFFIX=$(uname -s | tr '[:upper:]' '[:lower:]')
+    [ "$PLAT_SUFFIX" = "darwin" ] || true
+    BIN="$ROOT/plugin/bin/restruct-${PLAT_SUFFIX}-${ARCH}"
+    echo "[watch] resolved binary path: $BIN"
 fi
 
 SERVER_PID=""
@@ -73,8 +76,7 @@ stop_server() {
 }
 
 rebuild_and_restart() {
-    echo "[watch] rebuilding $RUN_TARGET..."
-    if "$XMAKE" build "$RUN_TARGET"; then
+    if go_build; then
         echo "[watch] restarting..."
         stop_server
         start_server
@@ -90,6 +92,20 @@ cleanup() {
 }
 
 trap cleanup INT TERM HUP EXIT
+
+# Build Go binary directly, bypassing xmake's dep chain.
+# xmake build cli → copy-web-dist → web, which runs tsgo+vite.
+# In dev mode Vite serves the frontend — we don't need a production
+# web bundle, and a TS error in web should never block Go from building.
+go_build() {
+    echo "[watch] building Go binary..."
+    cd "$ROOT/cli" && go build -tags debug \
+        -ldflags "-X github.com/tjw/restruct/cmd.Version=dev" \
+        -o "$BIN" . 2>&1
+    cd "$ROOT"
+}
+
+go_build || echo "[watch] build failed, starting with existing binary"
 
 # Initial launch
 start_server
