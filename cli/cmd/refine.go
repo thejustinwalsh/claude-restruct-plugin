@@ -81,21 +81,21 @@ are appended as additional context that guides Claude's behavior.`,
 
 		// Open DB for telemetry (best-effort, don't block on failure)
 		var recorder *db.Recorder
+		sessionID := db.ResolveSessionID(input.SessionID)
 		database, dbErr := db.Open(db.DefaultPath())
 		if dbErr != nil {
 			slog.Warn("failed to open db, telemetry disabled", "error", dbErr)
 		} else {
 			defer database.Close()
 			recorder = db.NewRecorder(database, serverURL)
-			recorder.RecordSession(input.SessionID, cwd, input.TranscriptPath)
+			// Auto-heal: ensure session is active (handles resume, missed SessionStart)
+			sessionID = recorder.EnsureSession(sessionID, cwd, input.TranscriptPath)
 		}
 
 		// Track session in .restruct/ (fast local files)
 		sessMgr := session.NewManager(cwd)
-		if input.SessionID != "" {
-			if _, err := sessMgr.Start(input.SessionID, cwd, input.TranscriptPath); err != nil {
-				slog.Warn("session tracking error", "error", err)
-			}
+		if _, err := sessMgr.Start(sessionID, cwd, input.TranscriptPath); err != nil {
+			slog.Warn("session tracking error", "error", err)
 		}
 
 		// Pass through short prompts, follow-ups, commands, or when bypassed
@@ -108,7 +108,7 @@ are appended as additional context that guides Claude's behavior.`,
 			if recorder != nil {
 				valid := true
 				passthroughRefID = recorder.RecordRefinement(&db.Refinement{
-					SessionID:   input.SessionID,
+					SessionID:   sessionID,
 					ProjectPath: cwd,
 					RawPrompt:   input.Prompt,
 					Passthrough: true,
@@ -116,8 +116,8 @@ are appended as additional context that guides Claude's behavior.`,
 				})
 			}
 			// Take snapshot even for passthroughs — verification needs a baseline
-			if database != nil && recorder != nil && input.SessionID != "" && passthroughRefID > 0 {
-				takeSnapshotForRefinement(database, recorder, input.SessionID, passthroughRefID, cwd, projectDir)
+			if database != nil && recorder != nil && sessionID != "" && passthroughRefID > 0 {
+				takeSnapshotForRefinement(database, recorder, sessionID, passthroughRefID, cwd, projectDir)
 			}
 			return hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
 		}
@@ -130,15 +130,15 @@ are appended as additional context that guides Claude's behavior.`,
 
 		// Attach session context provider so the local LLM can see
 		// recent conversation history (intents from prior refinements).
-		if database != nil && input.SessionID != "" {
-			p.SetSessionProvider(database, input.SessionID)
+		if database != nil && sessionID != "" {
+			p.SetSessionProvider(database, sessionID)
 		}
 
 		// Create pending refinement record before LLM call (needed for streaming ID)
 		var refID int64
 		if recorder != nil {
 			refID = recorder.RecordPendingRefinement(&db.Refinement{
-				SessionID:   input.SessionID,
+				SessionID:   sessionID,
 				ProjectPath: cwd,
 				RawPrompt:   input.Prompt,
 				Model:       cfg.Ollama.Model,
@@ -148,7 +148,7 @@ are appended as additional context that guides Claude's behavior.`,
 
 		// Create streaming sink (best-effort, nil if server unavailable).
 		// All HTTP calls happen in a background goroutine — never blocks the hook.
-		tokenSink := sink.NewHttpTokenSink(serverURL, refID, input.SessionID)
+		tokenSink := sink.NewHttpTokenSink(serverURL, refID, sessionID)
 
 		// Broadcast the LLM input prompt as soon as it's built (before inference)
 		p.SetInputReadyCallback(func(inputPrompt string) {
@@ -205,8 +205,8 @@ are appended as additional context that guides Claude's behavior.`,
 		}
 
 		// Record in local session file
-		if input.SessionID != "" {
-			if _, err := sessMgr.RecordRefinement(input.SessionID); err != nil {
+		if sessionID != "" {
+			if _, err := sessMgr.RecordRefinement(sessionID); err != nil {
 				slog.Warn("session record error", "error", err)
 			}
 		}
@@ -237,8 +237,8 @@ are appended as additional context that guides Claude's behavior.`,
 		}
 
 		// Take snapshot for verification baseline (same DB connection, same process — no race)
-		if database != nil && recorder != nil && input.SessionID != "" && refID > 0 {
-			takeSnapshotForRefinement(database, recorder, input.SessionID, refID, cwd, projectDir)
+		if database != nil && recorder != nil && sessionID != "" && refID > 0 {
+			takeSnapshotForRefinement(database, recorder, sessionID, refID, cwd, projectDir)
 		}
 
 		// Frame the output for Claude or passthrough if no context needed

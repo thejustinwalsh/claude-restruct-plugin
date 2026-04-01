@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -176,11 +177,49 @@ func (d *DB) UpsertSession(s *Session) error {
 		INSERT INTO sessions (id, project_path, started_at, transcript_path, status)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			ended_at = COALESCE(excluded.ended_at, sessions.ended_at),
-			status = COALESCE(excluded.status, sessions.status)`,
+			ended_at = NULL,
+			status = 'active',
+			transcript_path = COALESCE(excluded.transcript_path, sessions.transcript_path)`,
 		s.ID, s.ProjectPath, s.StartedAt, s.TranscriptPath, s.Status,
 	)
 	return err
+}
+
+// PurgatorySessionID is used when no session_id is provided by Claude Code.
+// Data still flows somewhere rather than being silently dropped. Hooks that
+// receive a real session_id later will migrate data via standard upsert.
+const PurgatorySessionID = "purgatory"
+
+// ResolveSessionID returns the provided session ID, or the purgatory ID if empty.
+// Call this in every hook handler to guarantee data is never silently dropped.
+func ResolveSessionID(sessionID string) string {
+	if sessionID == "" {
+		slog.Warn("session_id missing from hook input, using purgatory session")
+		return PurgatorySessionID
+	}
+	return sessionID
+}
+
+// EnsureSession guarantees a session row exists and is active.
+// Any hook that receives a session_id calls this to auto-heal
+// sessions that were ended or never recorded (e.g., resumed sessions).
+// If sessionID is empty, uses PurgatorySessionID.
+func (d *DB) EnsureSession(sessionID, projectPath, transcriptPath string) string {
+	sessionID = ResolveSessionID(sessionID)
+	_, err := d.pool.Exec(`
+		INSERT INTO sessions (id, project_path, started_at, status, transcript_path)
+		VALUES (?, ?, ?, 'active', ?)
+		ON CONFLICT(id) DO UPDATE SET
+			ended_at = NULL,
+			status = 'active',
+			project_path = COALESCE(NULLIF(excluded.project_path, ''), sessions.project_path),
+			transcript_path = COALESCE(NULLIF(excluded.transcript_path, ''), sessions.transcript_path)`,
+		sessionID, projectPath, time.Now().UTC(), transcriptPath,
+	)
+	if err != nil {
+		slog.Warn("ensure session failed", "error", err, "session_id", sessionID)
+	}
+	return sessionID
 }
 
 func (d *DB) EndSession(id string) error {

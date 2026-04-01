@@ -153,6 +153,103 @@ func TestGetSession_NotFound(t *testing.T) {
 	}
 }
 
+func TestResolveSessionID(t *testing.T) {
+	if got := ResolveSessionID("abc-123"); got != "abc-123" {
+		t.Errorf("ResolveSessionID('abc-123') = %q, want 'abc-123'", got)
+	}
+	if got := ResolveSessionID(""); got != PurgatorySessionID {
+		t.Errorf("ResolveSessionID('') = %q, want %q", got, PurgatorySessionID)
+	}
+}
+
+func TestEnsureSession_CreatesNew(t *testing.T) {
+	d := testDB(t)
+
+	sid := d.EnsureSession("new-sess", "/tmp/proj", "/tmp/transcript.jsonl")
+	if sid != "new-sess" {
+		t.Errorf("EnsureSession returned %q, want 'new-sess'", sid)
+	}
+
+	got, _ := d.GetSession("new-sess")
+	if got == nil {
+		t.Fatal("expected session to be created")
+	}
+	if got.Status != "active" {
+		t.Errorf("status = %q, want 'active'", got.Status)
+	}
+}
+
+func TestEnsureSession_RevivesEnded(t *testing.T) {
+	d := testDB(t)
+
+	// Create and end a session
+	d.UpsertSession(&Session{
+		ID: "ended-sess", ProjectPath: "/tmp", StartedAt: time.Now().UTC(), Status: "active",
+	})
+	d.EndSession("ended-sess")
+
+	got, _ := d.GetSession("ended-sess")
+	if got.Status != "ended" {
+		t.Fatalf("precondition: status = %q, want 'ended'", got.Status)
+	}
+
+	// EnsureSession should revive it
+	d.EnsureSession("ended-sess", "/tmp", "")
+
+	got, _ = d.GetSession("ended-sess")
+	if got.Status != "active" {
+		t.Errorf("status after ensure = %q, want 'active'", got.Status)
+	}
+	if got.EndedAt != nil {
+		t.Error("ended_at should be NULL after revive")
+	}
+}
+
+func TestEnsureSession_Purgatory(t *testing.T) {
+	d := testDB(t)
+
+	sid := d.EnsureSession("", "/tmp/proj", "")
+	if sid != PurgatorySessionID {
+		t.Errorf("EnsureSession('') returned %q, want %q", sid, PurgatorySessionID)
+	}
+
+	got, _ := d.GetSession(PurgatorySessionID)
+	if got == nil {
+		t.Fatal("expected purgatory session to be created")
+	}
+	if got.Status != "active" {
+		t.Errorf("purgatory status = %q, want 'active'", got.Status)
+	}
+}
+
+func TestUpsertSession_ClearsEndedAt(t *testing.T) {
+	d := testDB(t)
+
+	// Create, end, then upsert again
+	d.UpsertSession(&Session{
+		ID: "reopen-sess", ProjectPath: "/tmp", StartedAt: time.Now().UTC(), Status: "active",
+	})
+	d.EndSession("reopen-sess")
+
+	got, _ := d.GetSession("reopen-sess")
+	if got.EndedAt == nil {
+		t.Fatal("precondition: ended_at should be set")
+	}
+
+	// Upsert should clear ended_at and set active
+	d.UpsertSession(&Session{
+		ID: "reopen-sess", ProjectPath: "/tmp", StartedAt: time.Now().UTC(), Status: "active",
+	})
+
+	got, _ = d.GetSession("reopen-sess")
+	if got.Status != "active" {
+		t.Errorf("status = %q, want 'active'", got.Status)
+	}
+	if got.EndedAt != nil {
+		t.Error("ended_at should be NULL after upsert")
+	}
+}
+
 func TestListSessions(t *testing.T) {
 	d := testDB(t)
 

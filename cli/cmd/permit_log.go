@@ -54,6 +54,13 @@ Used as an async hook handler — never blocks tool execution.`,
 		}
 		defer database.Close()
 
+		// Auto-heal session
+		cwd := input.Cwd
+		if cwd == "" {
+			cwd, _ = os.Getwd()
+		}
+		database.EnsureSession(input.SessionID, cwd, input.TranscriptPath)
+
 		outcome := "executed"
 		if event == "failed" {
 			outcome = "failed"

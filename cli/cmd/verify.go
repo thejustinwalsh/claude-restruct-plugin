@@ -91,17 +91,15 @@ Used as a hook handler for TaskCompleted and Stop events.`,
 			return nil
 		}
 
-		if input.SessionID == "" {
-			slog.Warn("verify: no session_id, allowing")
-			return nil
-		}
-
 		database, err := db.Open(db.DefaultPath())
 		if err != nil {
 			slog.Warn("verify: db error, allowing", "error", err)
 			return nil
 		}
 		defer database.Close()
+
+		// Auto-heal session (resolves empty session_id to purgatory)
+		sessionID := database.EnsureSession(input.SessionID, projectDir, input.TranscriptPath)
 
 		verifyCfg, _ := config.LoadFromViper()
 		if verifyCfg == nil {
@@ -110,7 +108,7 @@ Used as a hook handler for TaskCompleted and Stop events.`,
 		serverURL := fmt.Sprintf("http://localhost:%s", verifyCfg.Server.Port)
 
 		recorder := db.NewRecorder(database, serverURL)
-		refinementID := database.LatestRefinementID(input.SessionID)
+		refinementID := database.LatestRefinementID(sessionID)
 
 		scope := "prompt"
 		if input.TaskID != "" {
@@ -118,27 +116,27 @@ Used as a hook handler for TaskCompleted and Stop events.`,
 		}
 
 		// Check if we have a snapshot for this scope
-		has, err := verify.HasSnapshot(database, input.SessionID, scope)
+		has, err := verify.HasSnapshot(database, sessionID, scope)
 		if err != nil {
 			slog.Warn("verify: snapshot check error", "error", err)
 			return nil
 		}
 		if !has {
 			if scope != "prompt" {
-				has, _ = verify.HasSnapshot(database, input.SessionID, "prompt")
+				has, _ = verify.HasSnapshot(database, sessionID, "prompt")
 				if has {
 					scope = "prompt"
 				}
 			}
 			if !has {
 				slog.Debug("verify: no snapshot, allowing")
-				recorder.RecordVerification(input.SessionID, refinementID, scope, input.HookEventName, cwd, projectDir, "", "", "skip", time.Since(verifyStart).Microseconds())
+				recorder.RecordVerification(sessionID, refinementID, scope, input.HookEventName, cwd, projectDir, "", "", "skip", time.Since(verifyStart).Microseconds())
 				return nil
 			}
 		}
 
 		// Diff against snapshot using project root
-		changedFiles, err := verify.DiffSnapshot(database, input.SessionID, scope, projectDir)
+		changedFiles, err := verify.DiffSnapshot(database, sessionID, scope, projectDir)
 		if err != nil {
 			slog.Warn("verify: diff error", "error", err)
 			return nil
@@ -146,7 +144,7 @@ Used as a hook handler for TaskCompleted and Stop events.`,
 
 		if len(changedFiles) == 0 {
 			slog.Debug("verify: no file changes detected")
-			recorder.RecordVerification(input.SessionID, refinementID, scope, input.HookEventName, cwd, projectDir, "", "", "pass", time.Since(verifyStart).Microseconds())
+			recorder.RecordVerification(sessionID, refinementID, scope, input.HookEventName, cwd, projectDir, "", "", "pass", time.Since(verifyStart).Microseconds())
 			return nil
 		}
 
@@ -159,11 +157,11 @@ Used as a hook handler for TaskCompleted and Stop events.`,
 		slog.Debug("verify: filtered checks", "total_checks", len(cfg.Checks), "relevant", len(relevant), "changed_files", len(changedFiles))
 		if len(relevant) == 0 {
 			slog.Debug("verify: no relevant checks for changed files")
-			recorder.RecordVerification(input.SessionID, refinementID, scope, input.HookEventName, cwd, projectDir, string(changedFilesJSON), "", "pass", time.Since(verifyStart).Microseconds())
+			recorder.RecordVerification(sessionID, refinementID, scope, input.HookEventName, cwd, projectDir, string(changedFilesJSON), "", "pass", time.Since(verifyStart).Microseconds())
 			if scope != "prompt" {
 				globs := verify.CollectGlobs(cfg)
-				verify.TakeSnapshot(database, input.SessionID, "prompt", projectDir, globs)
-				verify.CleanSnapshot(database, input.SessionID, scope)
+				verify.TakeSnapshot(database, sessionID, "prompt", projectDir, globs)
+				verify.CleanSnapshot(database, sessionID, scope)
 			}
 			return nil
 		}
@@ -185,7 +183,7 @@ Used as a hook handler for TaskCompleted and Stop events.`,
 		for _, r := range results {
 			if !r.Passed {
 				// Record BEFORE exit
-				recorder.RecordVerification(input.SessionID, refinementID, scope, input.HookEventName, cwd, projectDir, string(changedFilesJSON), checksJSON, "fail", time.Since(verifyStart).Microseconds())
+				recorder.RecordVerification(sessionID, refinementID, scope, input.HookEventName, cwd, projectDir, string(changedFilesJSON), checksJSON, "fail", time.Since(verifyStart).Microseconds())
 
 				check := verify.FindCheck(relevant, r.Name)
 				command := r.Name
@@ -200,15 +198,15 @@ Used as a hook handler for TaskCompleted and Stop events.`,
 
 		// All passed
 		slog.Debug("verify: all checks passed")
-		recorder.RecordVerification(input.SessionID, refinementID, scope, input.HookEventName, cwd, projectDir, string(changedFilesJSON), checksJSON, "pass", time.Since(verifyStart).Microseconds())
+		recorder.RecordVerification(sessionID, refinementID, scope, input.HookEventName, cwd, projectDir, string(changedFilesJSON), checksJSON, "pass", time.Since(verifyStart).Microseconds())
 
 		globs := verify.CollectGlobs(cfg)
 
 		if scope != "prompt" {
-			verify.TakeSnapshot(database, input.SessionID, "prompt", projectDir, globs)
-			verify.CleanSnapshot(database, input.SessionID, scope)
+			verify.TakeSnapshot(database, sessionID, "prompt", projectDir, globs)
+			verify.CleanSnapshot(database, sessionID, scope)
 		} else {
-			verify.TakeSnapshot(database, input.SessionID, "prompt", projectDir, globs)
+			verify.TakeSnapshot(database, sessionID, "prompt", projectDir, globs)
 		}
 
 		return nil

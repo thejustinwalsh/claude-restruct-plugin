@@ -72,17 +72,15 @@ Used as a hook handler for UserPromptSubmit and TaskCreated events.`,
 			scope = input.TaskID
 		}
 
-		if input.SessionID == "" {
-			slog.Warn("snapshot: no session_id, skipping")
-			return nil
-		}
-
 		database, err := db.Open(db.DefaultPath())
 		if err != nil {
 			slog.Warn("snapshot: db error", "error", err)
 			return nil
 		}
 		defer database.Close()
+
+		// Auto-heal session (resolves empty session_id to purgatory)
+		sessionID := database.EnsureSession(input.SessionID, projectDir, input.TranscriptPath)
 
 		snapCfg, _ := config.LoadFromViper()
 		if snapCfg == nil {
@@ -93,7 +91,7 @@ Used as a hook handler for UserPromptSubmit and TaskCreated events.`,
 		// Take snapshot with timing
 		globs := verify.CollectGlobs(cfg)
 		start := time.Now()
-		if err := verify.TakeSnapshot(database, input.SessionID, scope, projectDir, globs); err != nil {
+		if err := verify.TakeSnapshot(database, sessionID, scope, projectDir, globs); err != nil {
 			slog.Warn("snapshot: take error", "error", err)
 			return nil
 		}
@@ -103,19 +101,19 @@ Used as a hook handler for UserPromptSubmit and TaskCreated events.`,
 		var fileCount int
 		database.Pool().QueryRow(
 			"SELECT COUNT(*) FROM snapshots WHERE session_id = ? AND scope = ?",
-			input.SessionID, scope,
+			sessionID, scope,
 		).Scan(&fileCount)
 
 		// Link to the most recent refinement (refine runs before snapshot in UserPromptSubmit)
-		refinementID := database.LatestRefinementID(input.SessionID)
+		refinementID := database.LatestRefinementID(sessionID)
 
-		slog.Debug("snapshot taken", "session", input.SessionID, "scope", scope,
+		slog.Debug("snapshot taken", "session", sessionID, "scope", scope,
 			"files", fileCount, "duration_us", durationUs, "project_dir", projectDir,
 			"refinement_id", refinementID)
 
 		// DB write + SSE broadcast handled by the Recorder
 		recorder := db.NewRecorder(database, serverURL)
-		recorder.RecordSnapshot(input.SessionID, refinementID, scope, input.HookEventName, cwd, projectDir, fileCount, durationUs)
+		recorder.RecordSnapshot(sessionID, refinementID, scope, input.HookEventName, cwd, projectDir, fileCount, durationUs)
 
 		// Opportunistic pruning
 		pruned, _ := verify.PruneStaleSnapshots(database, 24*time.Hour)

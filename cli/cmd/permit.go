@@ -82,22 +82,22 @@ Target latency: <50ms. DB write is best-effort after the decision.`,
 			"elapsed_us", elapsed.Microseconds(),
 		)
 
-		// Record decision to DB (best-effort, after the fast path)
-		go recordToolDecision(input, projectDir, decision, elapsed)
-
-		if decision.Action == "" {
-			return nil
-		}
-
+		// Write decision to stdout FIRST (fast path)
+		var writeErr error
 		if decision.Action == "deny" {
-			return hook.WriteOutput(os.Stdout, hook.PermitOutput("deny", decision.Reason))
+			writeErr = hook.WriteOutput(os.Stdout, hook.PermitOutput("deny", decision.Reason))
+		} else if decision.Action != "" {
+			writeErr = hook.WriteOutput(os.Stdout, hook.PermitOutput("allow", decision.Reason))
 		}
 
-		return hook.WriteOutput(os.Stdout, hook.PermitOutput("allow", decision.Reason))
+		// Record decision to DB (best-effort, after stdout)
+		recordToolDecision(input, projectDir, decision, elapsed)
+
+		return writeErr
 	},
 }
 
-// recordToolDecision writes the decision to SQLite. Best-effort — never blocks the hook.
+// recordToolDecision writes the decision to SQLite and ensures the session is active.
 func recordToolDecision(input *hook.HookInput, projectDir string, decision permit.Decision, elapsed time.Duration) {
 	database, err := db.Open(db.DefaultPath())
 	if err != nil {
@@ -105,6 +105,17 @@ func recordToolDecision(input *hook.HookInput, projectDir string, decision permi
 		return
 	}
 	defer database.Close()
+
+	verifyCfg, _ := config.LoadFromViper()
+	if verifyCfg == nil {
+		verifyCfg = config.Defaults()
+	}
+	serverURL := fmt.Sprintf("http://localhost:%s", verifyCfg.Server.Port)
+
+	recorder := db.NewRecorder(database, serverURL)
+
+	// Auto-heal: ensure session is active (handles resume, missed SessionStart, etc.)
+	sessionID := recorder.EnsureSession(input.SessionID, projectDir, input.TranscriptPath)
 
 	hookDecision := decision.Action
 	if hookDecision == "" {
@@ -114,15 +125,8 @@ func recordToolDecision(input *hook.HookInput, projectDir string, decision permi
 	reason := decision.Reason
 	durationUs := elapsed.Microseconds()
 
-	verifyCfg, _ := config.LoadFromViper()
-	if verifyCfg == nil {
-		verifyCfg = config.Defaults()
-	}
-	serverURL := fmt.Sprintf("http://localhost:%s", verifyCfg.Server.Port)
-
-	recorder := db.NewRecorder(database, serverURL)
 	recorder.RecordToolDecision(&db.ToolDecision{
-		SessionID:        input.SessionID,
+		SessionID:        sessionID,
 		ProjectPath:      projectDir,
 		ToolName:         input.ToolName,
 		ToolInputSummary: summarizeToolInput(input.ToolName, input.ToolInput),

@@ -25,10 +25,9 @@ func NewRecorder(database *DB, serverURL string) *Recorder {
 }
 
 // RecordSession ensures a session record exists.
+// Uses purgatory session if sessionID is empty.
 func (r *Recorder) RecordSession(sessionID, projectPath, transcriptPath string) {
-	if sessionID == "" {
-		return
-	}
+	sessionID = ResolveSessionID(sessionID)
 	err := r.db.UpsertSession(&Session{
 		ID:             sessionID,
 		ProjectPath:    projectPath,
@@ -144,6 +143,13 @@ func (r *Recorder) RecordVerification(sessionID string, refinementID int64, scop
 		return
 	}
 	r.broadcastVerification(e)
+}
+
+// EnsureSession guarantees the session exists and is active.
+// Call this from any hook handler that receives a session_id.
+// Returns the resolved session ID (may be purgatory if input was empty).
+func (r *Recorder) EnsureSession(sessionID, projectPath, transcriptPath string) string {
+	return r.db.EnsureSession(sessionID, projectPath, transcriptPath)
 }
 
 // EndSession marks a session as ended.
