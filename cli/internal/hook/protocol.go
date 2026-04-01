@@ -28,6 +28,18 @@ type HookInput struct {
 	ToolInput    map[string]any `json:"tool_input,omitempty"`
 	ToolUseID    string         `json:"tool_use_id,omitempty"`
 	ToolResponse string         `json:"tool_response,omitempty"` // PostToolUse only
+
+	// FileChanged fields
+	FilePath     string `json:"file_path,omitempty"`
+	MatcherValue string `json:"matcher_value,omitempty"`
+	Change       string `json:"change,omitempty"` // "created", "modified", "deleted"
+
+	// InstructionsLoaded fields
+	MemoryType      string   `json:"memory_type,omitempty"`       // "User", "Project", "Local", "Managed"
+	LoadReason      string   `json:"load_reason,omitempty"`       // "session_start", "nested_traversal", "path_glob_match", "include", "compact"
+	Globs           []string `json:"globs,omitempty"`             // path glob patterns from frontmatter
+	TriggerFilePath string   `json:"trigger_file_path,omitempty"` // file that triggered lazy load
+	ParentFilePath  string   `json:"parent_file_path,omitempty"`  // parent instruction file (for includes)
 }
 
 // HookSpecificOutput contains event-specific fields in the hook response.
@@ -95,6 +107,17 @@ func BlockOutput(reason string) *HookOutput {
 			HookEventName: "UserPromptSubmit",
 			Decision:      "block",
 			Reason:        reason,
+		},
+	}
+}
+
+// SessionStartOutput returns a SessionStart response with additionalContext.
+// Unlike ContextOutput, this does not suppress output and sets the correct hook event name.
+func SessionStartOutput(context string) *HookOutput {
+	return &HookOutput{
+		HookSpecificOutput: &HookSpecificOutput{
+			HookEventName:     "SessionStart",
+			AdditionalContext: context,
 		},
 	}
 }

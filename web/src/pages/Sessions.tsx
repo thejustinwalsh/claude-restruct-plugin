@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useActions, useSessions } from '@/store';
 import { api } from '@/api/client';
-import type { Session, Refinement, SessionMetrics } from '@/api/client';
+import type {
+  Session,
+  Refinement,
+  SessionMetrics,
+  BootstrapEvent,
+} from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -165,12 +170,19 @@ function SessionPanel({
 }) {
   const [metrics, setMetrics] = useState<SessionMetrics | null>(null);
   const [refinements, setRefinements] = useState<Refinement[]>([]);
+  const [bootstrap, setBootstrap] = useState<BootstrapEvent | null>(null);
   const { fetchSessionRefinements } = useActions();
 
   useEffect(() => {
     api
       .sessionStats(session.id)
       .then(setMetrics)
+      .catch(() => {});
+    api
+      .sessionBootstrap(session.id)
+      .then((data) => {
+        if (data) setBootstrap(data);
+      })
       .catch(() => {});
     fetchSessionRefinements(session.id).then(setRefinements);
   }, [session.id, fetchSessionRefinements]);
@@ -213,6 +225,40 @@ function SessionPanel({
             </Card>
           ))}
         </div>
+      )}
+
+      {bootstrap && (
+        <Card>
+          <CardContent className="flex items-center gap-4 pt-4">
+            <div>
+              <p className="text-muted-foreground text-xs">Bootstrap</p>
+              <p className="text-sm font-medium">
+                {bootstrap.files_processed} files, {bootstrap.total_rules} rules
+              </p>
+            </div>
+            <div>
+              <p className="text-muted-foreground text-xs">Duration</p>
+              <p className="text-sm font-medium">
+                {bootstrap.duration_us < 1000
+                  ? `${bootstrap.duration_us}\u00B5s`
+                  : `${(bootstrap.duration_us / 1000).toFixed(1)}ms`}
+              </p>
+            </div>
+            <div>
+              <p className="text-muted-foreground text-xs">Classification</p>
+              <Badge
+                variant={
+                  bootstrap.classify_status === 'complete'
+                    ? 'default'
+                    : 'secondary'
+                }
+                className="text-[10px]"
+              >
+                {bootstrap.classify_status}
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       <Separator />

@@ -170,6 +170,9 @@ func (r *Recorder) RecordToolDecision(td *ToolDecision) int64 {
 		return 0
 	}
 	td.ID = id
+	if td.CreatedAt.IsZero() {
+		td.CreatedAt = time.Now().UTC()
+	}
 	r.broadcastToolDecision(td)
 	return id
 }
@@ -203,6 +206,65 @@ func (r *Recorder) broadcastToolDecision(td *ToolDecision) {
 	resp, err := client.Post(r.serverURL+"/api/tool-decision", "application/json", bytes.NewReader(data))
 	if err != nil {
 		slog.Debug("broadcast tool decision: post error", "error", err)
+		return
+	}
+	resp.Body.Close()
+}
+
+// RecordBootstrap records a bootstrap event and broadcasts it.
+func (r *Recorder) RecordBootstrap(e *BootstrapEvent) int64 {
+	id, err := r.db.InsertBootstrapEvent(e)
+	if err != nil {
+		slog.Warn("failed to record bootstrap event", "error", err)
+		return 0
+	}
+	e.ID = id
+	if e.CreatedAt.IsZero() {
+		e.CreatedAt = time.Now().UTC()
+	}
+	r.broadcastBootstrap(e)
+	return id
+}
+
+// UpdateBootstrapClassify updates classification status and broadcasts.
+func (r *Recorder) UpdateBootstrapClassify(id int64, status string, durationUs int64, errMsg *string) {
+	if id == 0 {
+		return
+	}
+	if err := r.db.UpdateBootstrapClassify(id, status, durationUs, errMsg); err != nil {
+		slog.Warn("failed to update bootstrap classify", "error", err, "id", id)
+		return
+	}
+	// Broadcast updated event
+	e, err := r.db.GetBootstrapForSession("")
+	if err == nil && e != nil && e.ID == id {
+		r.broadcastBootstrap(e)
+	}
+}
+
+// RecordContextSelections records which documents were selected during refinement.
+func (r *Recorder) RecordContextSelections(refinementID int64, selections []ContextSelection) {
+	if refinementID == 0 || len(selections) == 0 {
+		return
+	}
+	if err := r.db.InsertContextSelections(refinementID, selections); err != nil {
+		slog.Warn("failed to record context selections", "error", err, "refinement_id", refinementID)
+	}
+}
+
+// broadcastBootstrap POSTs a bootstrap event to the server for SSE delivery.
+func (r *Recorder) broadcastBootstrap(e *BootstrapEvent) {
+	if r.serverURL == "" {
+		return
+	}
+	data, err := json.Marshal(e)
+	if err != nil {
+		return
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Post(r.serverURL+"/api/bootstrap", "application/json", bytes.NewReader(data))
+	if err != nil {
+		slog.Debug("broadcast bootstrap: post error", "error", err)
 		return
 	}
 	resp.Body.Close()

@@ -7,7 +7,14 @@ import {
   useActions,
 } from '@/store';
 import type { StreamState } from '@/store';
-import type { PipelineEvent, VerificationEvent, CheckRun } from '@/api/client';
+import { useState } from 'react';
+import { api } from '@/api/client';
+import type {
+  PipelineEvent,
+  VerificationEvent,
+  CheckRun,
+  ContextSelection,
+} from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -486,6 +493,55 @@ function VerificationTab({
 }
 
 // ---------------------------------------------------------------------------
+// Context Selection — shows which deep-context documents the LLM selected
+// ---------------------------------------------------------------------------
+
+function ContextSelections({ refinementId }: { refinementId: number }) {
+  const [selections, setSelections] = useState<ContextSelection[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    api
+      .refinementContextSelections(refinementId)
+      .then((data) => {
+        setSelections(data);
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, [refinementId]);
+
+  if (!loaded || selections.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium">
+          Context Selection
+          <span className="text-muted-foreground ml-1 font-normal">
+            ({selections.length}{' '}
+            {selections.length === 1 ? 'document' : 'documents'})
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-wrap gap-2">
+          {selections.map((s) => (
+            <Badge key={s.id} variant="secondary" className="font-mono text-xs">
+              {s.doc_source}
+              {s.rules_selected > 0 && (
+                <span className="text-muted-foreground ml-1">
+                  ({s.rules_selected} rules)
+                </span>
+              )}
+            </Badge>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -646,6 +702,9 @@ export function RefinementDetail({
       ) : isPending ? (
         <PipelineSkeleton />
       ) : null}
+
+      {/* Context Selection — which deep-context docs the LLM selected */}
+      <ContextSelections refinementId={id} />
 
       {/* Tabs: Data Flow (default) | Verification */}
       <Tabs defaultValue="data-flow">

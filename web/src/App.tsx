@@ -7,6 +7,7 @@ import { Sessions } from '@/pages/Sessions';
 import { RefinementDetail } from '@/pages/RefinementDetail';
 import { Stats } from '@/pages/Stats';
 import { History } from '@/pages/History';
+import { Context } from '@/pages/Context';
 import { api } from '@/api/client';
 import type { ServerInfo } from '@/api/client';
 import { useState } from 'react';
@@ -74,19 +75,30 @@ function App() {
   }, []);
 
   return (
-    <div className="bg-background flex min-h-screen flex-col">
+    <div className="bg-background flex h-screen flex-col">
       <nav className="bg-card border-b">
         <div className="mx-auto flex max-w-6xl items-center gap-6 px-4 py-3">
           <Link href="/" className="text-lg font-bold">restruct</Link>
           <NavLink href="/">Dashboard</NavLink>
           <NavLink href="/sessions">Sessions</NavLink>
           <NavLink href="/history">History</NavLink>
+          <NavLink href="/context">Context</NavLink>
           <NavLink href="/stats">Stats</NavLink>
+          {info?.mode === 'debug' && (
+            <a
+              href="http://localhost:5001/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-muted-foreground hover:text-foreground text-sm transition-colors"
+            >
+              Docs
+            </a>
+          )}
           <span className="ml-auto"><LiveIndicator /></span>
         </div>
       </nav>
 
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-6">
+      <main className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col overflow-auto px-4 py-6">
         <Switch>
           <Route path="/" component={DashboardRoute} />
           <Route path="/sessions">
@@ -103,6 +115,12 @@ function App() {
           </Route>
           <Route path="/history/:id">
             {(params) => <History selectedSessionId={params.id} />}
+          </Route>
+          <Route path="/context">
+            {() => <Context />}
+          </Route>
+          <Route path="/context/:id">
+            {(params) => <Context selectedSessionId={params.id} />}
           </Route>
           <Route path="/stats" component={Stats} />
           <Route>

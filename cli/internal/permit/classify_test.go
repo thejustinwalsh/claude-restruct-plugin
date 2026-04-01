@@ -74,18 +74,40 @@ func TestClassifyBash_Network(t *testing.T) {
 }
 
 func TestClassifyBash_Destructive(t *testing.T) {
-	tests := []string{
+	shouldBlock := []string{
 		"rm -rf /",
 		"rm -rf ~",
 		"rm -rf $HOME",
+		"rm -r /",
+		"rm -rf /etc",
+		"rm -rf /usr",
+		"rm /bin",
 	}
 
-	for _, cmd := range tests {
-		t.Run(cmd, func(t *testing.T) {
+	for _, cmd := range shouldBlock {
+		t.Run("block_"+cmd, func(t *testing.T) {
 			tokens := TokenizeBash(cmd)
 			bc := ClassifyBash(tokens, cmd)
 			if !bc.IsDestructive {
 				t.Errorf("ClassifyBash(%q) IsDestructive = false, want true", cmd)
+			}
+		})
+	}
+
+	// These target valid user paths — must NOT false-positive as destructive
+	shouldAllow := []string{
+		"rm -rf /Users/tjw/Developer/project/dist",
+		"rm -rf /tmp/build-output",
+		"rm -r /Users/tjw/Developer/project/node_modules",
+		"rm -rf ~/Developer/project/dist",
+	}
+
+	for _, cmd := range shouldAllow {
+		t.Run("allow_"+cmd, func(t *testing.T) {
+			tokens := TokenizeBash(cmd)
+			bc := ClassifyBash(tokens, cmd)
+			if bc.IsDestructive {
+				t.Errorf("ClassifyBash(%q) IsDestructive = true, want false (false positive)", cmd)
 			}
 		})
 	}

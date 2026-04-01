@@ -16,7 +16,9 @@ func needsImplementationGuardrails(requestType string) bool {
 // composeContext assembles the final XML context block from the LLM's
 // classification and statically available data. Inline XML comments
 // annotate each section so Claude understands how to use them.
-func composeContext(c *LLMClassification, rules *prompt.ParsedRules, gitBranch string) string {
+// scopedRules is optional — when provided (from deep-context doc selection),
+// rules are sourced from specific documents with source attribution.
+func composeContext(c *LLMClassification, rules *prompt.ParsedRules, scopedRules map[string]*prompt.ParsedRules, gitBranch string) string {
 	var sb strings.Builder
 	implGuards := needsImplementationGuardrails(c.Type)
 
@@ -29,21 +31,44 @@ func composeContext(c *LLMClassification, rules *prompt.ParsedRules, gitBranch s
 	sb.WriteString(c.Intent)
 	sb.WriteString("\n</intent>\n")
 
-	// Applicable rules — LLM-selected, ranked by relevance, capped
+	// Applicable rules — LLM-selected, ranked by relevance, capped.
+	// When scoped rules are available (from deep-context doc selection),
+	// use them with source attribution. Otherwise fall back to flat rules.
 	const maxRules = 3
-	selectedRules := c.RelevantRules
-	if len(selectedRules) > maxRules {
-		selectedRules = selectedRules[:maxRules]
-	}
-	if len(selectedRules) > 0 {
-		sb.WriteString("\n<applicable_rules>\n")
-		sb.WriteString("<!-- Project rules relevant to this change. Follow them. -->\n")
-		for _, idx := range selectedRules {
-			if idx >= 1 && idx <= len(rules.ContextRules) {
-				fmt.Fprintf(&sb, "- %s\n", rules.ContextRules[idx-1])
+	if len(scopedRules) > 0 {
+		// Collect rules from scoped documents with source attribution
+		var scopedEntries []string
+		for source, pr := range scopedRules {
+			for _, r := range pr.ContextRules {
+				scopedEntries = append(scopedEntries, fmt.Sprintf("[%s] %s", source, r))
 			}
 		}
-		sb.WriteString("</applicable_rules>\n")
+		if len(scopedEntries) > maxRules {
+			scopedEntries = scopedEntries[:maxRules]
+		}
+		if len(scopedEntries) > 0 {
+			sb.WriteString("\n<applicable_rules>\n")
+			sb.WriteString("<!-- Project rules relevant to this change. Follow them. -->\n")
+			for _, entry := range scopedEntries {
+				fmt.Fprintf(&sb, "- %s\n", entry)
+			}
+			sb.WriteString("</applicable_rules>\n")
+		}
+	} else {
+		selectedRules := c.RelevantRules
+		if len(selectedRules) > maxRules {
+			selectedRules = selectedRules[:maxRules]
+		}
+		if len(selectedRules) > 0 {
+			sb.WriteString("\n<applicable_rules>\n")
+			sb.WriteString("<!-- Project rules relevant to this change. Follow them. -->\n")
+			for _, idx := range selectedRules {
+				if idx >= 1 && idx <= len(rules.ContextRules) {
+					fmt.Fprintf(&sb, "- %s\n", rules.ContextRules[idx-1])
+				}
+			}
+			sb.WriteString("</applicable_rules>\n")
+		}
 	}
 
 	// Protocol — universal reasoning directives, always injected
@@ -57,31 +82,63 @@ func composeContext(c *LLMClassification, rules *prompt.ParsedRules, gitBranch s
 	sb.WriteString("- Verify before assuming. Check the current state of code, config, and dependencies rather than guessing from memory.\n")
 	sb.WriteString("</protocol>\n")
 
-	// Workflow — process steps, always injected for code changes
-	if implGuards && len(rules.WorkflowRules) > 0 {
-		sb.WriteString("\n<workflow>\n")
-		sb.WriteString("<!-- Process steps to follow for this change. -->\n")
-		for _, r := range rules.WorkflowRules {
-			fmt.Fprintf(&sb, "- %s\n", r)
-		}
-		sb.WriteString("</workflow>\n")
-	}
-
-	// Constraints — LLM-selected design/architectural constraints, capped
-	const maxConstraints = 3
-	selectedConstraints := c.RelevantConstraints
-	if len(selectedConstraints) > maxConstraints {
-		selectedConstraints = selectedConstraints[:maxConstraints]
-	}
-	if len(selectedConstraints) > 0 {
-		sb.WriteString("\n<constraints>\n")
-		sb.WriteString("<!-- Design and architectural constraints relevant to this change. -->\n")
-		for _, idx := range selectedConstraints {
-			if idx >= 1 && idx <= len(rules.ConstraintRules) {
-				fmt.Fprintf(&sb, "- %s\n", rules.ConstraintRules[idx-1])
+	// Workflow — process steps, always injected for code changes.
+	// Merge workflow rules from scoped documents when available.
+	if implGuards {
+		var workflowRules []string
+		if len(scopedRules) > 0 {
+			for _, pr := range scopedRules {
+				workflowRules = append(workflowRules, pr.WorkflowRules...)
 			}
 		}
-		sb.WriteString("</constraints>\n")
+		if len(workflowRules) == 0 {
+			workflowRules = rules.WorkflowRules
+		}
+		if len(workflowRules) > 0 {
+			sb.WriteString("\n<workflow>\n")
+			sb.WriteString("<!-- Process steps to follow for this change. -->\n")
+			for _, r := range workflowRules {
+				fmt.Fprintf(&sb, "- %s\n", r)
+			}
+			sb.WriteString("</workflow>\n")
+		}
+	}
+
+	// Constraints — LLM-selected or scoped, capped
+	const maxConstraints = 3
+	if len(scopedRules) > 0 {
+		var scopedConstraints []string
+		for source, pr := range scopedRules {
+			for _, r := range pr.ConstraintRules {
+				scopedConstraints = append(scopedConstraints, fmt.Sprintf("[%s] %s", source, r))
+			}
+		}
+		if len(scopedConstraints) > maxConstraints {
+			scopedConstraints = scopedConstraints[:maxConstraints]
+		}
+		if len(scopedConstraints) > 0 {
+			sb.WriteString("\n<constraints>\n")
+			sb.WriteString("<!-- Design and architectural constraints relevant to this change. -->\n")
+			for _, entry := range scopedConstraints {
+				fmt.Fprintf(&sb, "- %s\n", entry)
+			}
+			sb.WriteString("</constraints>\n")
+		}
+	} else {
+		selectedConstraints := c.RelevantConstraints
+		if len(selectedConstraints) > maxConstraints {
+			selectedConstraints = selectedConstraints[:maxConstraints]
+		}
+		if len(selectedConstraints) > 0 {
+			sb.WriteString("\n<constraints>\n")
+			sb.WriteString("<!-- Design and architectural constraints relevant to this change. -->\n")
+			for _, idx := range selectedConstraints {
+				if idx >= 1 && idx <= len(rules.ConstraintRules) {
+					fmt.Fprintf(&sb, "- %s\n", rules.ConstraintRules[idx-1])
+				}
+			}
+			sb.WriteString("</constraints>\n")
+		}
 	}
 
 	// Analysis — from LLM
@@ -106,19 +163,39 @@ func composeContext(c *LLMClassification, rules *prompt.ParsedRules, gitBranch s
 
 	// Anti-patterns — available for ALL types, ranked, capped
 	const maxAntiPatterns = 6
-	selectedAntiPats := c.RelevantAntiPats
-	if len(selectedAntiPats) > maxAntiPatterns {
-		selectedAntiPats = selectedAntiPats[:maxAntiPatterns]
-	}
-	if len(selectedAntiPats) > 0 {
-		sb.WriteString("\n<anti_patterns>\n")
-		sb.WriteString("<!-- Specific things to avoid for this request. -->\n")
-		for _, idx := range selectedAntiPats {
-			if idx >= 1 && idx <= len(rules.AntiPatterns) {
-				fmt.Fprintf(&sb, "- %s\n", rules.AntiPatterns[idx-1])
+	if len(scopedRules) > 0 {
+		var scopedAnti []string
+		for source, pr := range scopedRules {
+			for _, r := range pr.AntiPatterns {
+				scopedAnti = append(scopedAnti, fmt.Sprintf("[%s] %s", source, r))
 			}
 		}
-		sb.WriteString("</anti_patterns>\n")
+		if len(scopedAnti) > maxAntiPatterns {
+			scopedAnti = scopedAnti[:maxAntiPatterns]
+		}
+		if len(scopedAnti) > 0 {
+			sb.WriteString("\n<anti_patterns>\n")
+			sb.WriteString("<!-- Specific things to avoid for this request. -->\n")
+			for _, entry := range scopedAnti {
+				fmt.Fprintf(&sb, "- %s\n", entry)
+			}
+			sb.WriteString("</anti_patterns>\n")
+		}
+	} else {
+		selectedAntiPats := c.RelevantAntiPats
+		if len(selectedAntiPats) > maxAntiPatterns {
+			selectedAntiPats = selectedAntiPats[:maxAntiPatterns]
+		}
+		if len(selectedAntiPats) > 0 {
+			sb.WriteString("\n<anti_patterns>\n")
+			sb.WriteString("<!-- Specific things to avoid for this request. -->\n")
+			for _, idx := range selectedAntiPats {
+				if idx >= 1 && idx <= len(rules.AntiPatterns) {
+					fmt.Fprintf(&sb, "- %s\n", rules.AntiPatterns[idx-1])
+				}
+			}
+			sb.WriteString("</anti_patterns>\n")
+		}
 	}
 
 	// Repo state — branch + LLM-summarized recent activity

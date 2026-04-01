@@ -8,7 +8,7 @@ order: 800
 
 ## Overview
 
-19 milestones taking the scaffolded Go codebase to a production-ready Claude Code plugin with a monitoring dashboard and self-improvement capabilities. Each milestone has a dedicated spec file with detailed requirements.
+20 milestones taking the scaffolded Go codebase to a production-ready Claude Code plugin with a monitoring dashboard and self-improvement capabilities. Each milestone has a dedicated spec file with detailed requirements.
 
 ---
 
@@ -19,7 +19,7 @@ order: 800
 | M1 | [Hook Protocol & Claude Code Integration](M1-HOOK-PROTOCOL.md) | **Done** | — | Verify and fix the hook contract; document session_id, transcript_path, and hook I/O schema |
 | M2 | [Core Pipeline Hardening](M2-CORE-PIPELINE.md) | **Done** | M1 | Production-ready pipeline: error handling, timeouts, streaming Ollama, graceful degradation |
 | M3 | [Prompt Engineering & Output Format](M3-PROMPT-ENGINE.md) | **Done** | M2 | v4: LLM outputs JSON classification, Go composes XML via compose.go. Dynamic footer, type-gated guardrails, LLM-aware of downstream effects. Passthrough detection, versioned prompts |
-| M4 | [Server & Dashboard](M4-SERVER-DASHBOARD.md) | **Done** | M1, M2 | Chi server, React SPA (wouter routing), SQLite data layer, SSE hub, streaming pipeline, /api/info endpoint, 4-panel refinement detail, `input_prompt` + `llm_output` DB columns |
+| M4 | [Server & Dashboard](M4-SERVER-DASHBOARD.md) | **Done** | M1, M2 | Chi server, React SPA (wouter routing), SQLite data layer, SSE hub, streaming pipeline, /api/info endpoint, 4-panel refinement detail, `input_prompt` + `llm_output` DB columns. History page with Timeline/Tool Use/Verifications tabs, real-time SSE updates, session selector with active-first sort. Global Live indicator in nav |
 | M5 | [Rules Engine & Context Gathering](M5-RULES-ENGINE.md) | **~60% Done** | M2 | Rules loader walks to git root, LLM selects rules by index, "After Every Change" = process guardrails, git stripped to branch+commits, LLM generates recent_activity summary, session clips from DB. Needs file mention detection |
 | M6 | [Caching & Performance](M6-CACHE-PERF.md) | **~40% Done** | M2, M4 | File-based cache, SHA256(prompt+rulesHash). Needs SQLite migration, TTL, LRU eviction |
 | M7 | [CLI UX & Configuration](M7-CLI-UX.md) | **~70% Done** | M2 | Doctor, model, config commands implemented. Needs auto-fix, error polish, completions, version check |
@@ -28,14 +28,15 @@ order: 800
 | M8.2 | [Verification System](M8.2-VERIFICATION.md) | **Done** | M1, M4 | Mechanical enforcement via hooks: snapshot on TaskCreated, verify on TaskCompleted/Stop, exit code 2 blocks task on failure. Per-project `.restruct/verify.yaml` config |
 | M9 | [Testing & Calibration](M9-TESTING.md) | **~50% Done** | M3, M4 | 213 tests across 13 packages. Integration tests use real CLAUDE.md + git. Needs eval framework, >80% coverage |
 | M10 | [Self-Improvement Loop](M10-SELF-IMPROVE.md) | Not Started | M4, M9 | Dashboard-driven feedback loop: rating analysis, system prompt refinement, rules suggestions |
-| M11 | [Project Bootstrap & Deep Context](M11-PROJECT-BOOTSTRAP.md) | Not Started | M1, M2, M5 | SessionStart scans CLAUDE.md files, generates deep-context docs in .restruct/links/, returns project map as additionalContext + watchPaths. Refinement uses retrieval-augmented rule selection |
-| M12 | [Smart Tool Permissions](M12-TOOL-PERMISSIONS.md) | Not Started | M1, M8 | PreToolUse hook auto-approves read-only + project-scoped tools, gates writes by auto-mode, detects network data exfiltration. Agent review for borderline cases. `.restruct/permissions.yaml` for allowed paths |
+| M11 | [Project Bootstrap & Deep Context](M11-PROJECT-BOOTSTRAP.md) | **~70% Done** | M1, M2, M5 | SessionStart bootstrap: discovers CLAUDE.md files, generates deep-context docs in .restruct/links/, builds project map (index.json), returns as additionalContext. Async LLM classification enriches keywords/summaries. FileChanged/InstructionsLoaded hooks re-index. Retrieval-augmented refinement: LLM selects relevant docs, compose uses scoped rules with source attribution. Needs: server endpoints, web dashboard (Context page, History integration), polish |
+| M12 | [Smart Tool Permissions](M12-TOOL-PERMISSIONS.md) | **Done** | M1, M8 | 8-tier PreToolUse hook: deterministic auto-approval, path canonicalization with symlink/traversal prevention, bash tokenizer + classifier, exfiltration detection, destructive command blocking, `.restruct/permissions.yaml`, PostToolUse/PostToolUseFailure outcome logging, SSE broadcasting, dashboard integration (History tool use tab), review-permissions skill. Agent review designed but off by default |
 | M13 | [Team Configuration](M13-TEAM-CONFIG.md) | Not Started | M7, M8 | Layered config: `.restruct/config.yaml` (team, checked in) → user config → env vars → plugin options (secrets). `restruct init` scaffolding. Selective `.gitignore` |
 | M14 | [Interactive Clarification](M14-INTERACTIVE-CLARIFICATION.md) | Not Started | M1, M2, M3 | Prompt Request Protocol surfaces LLM-detected ambiguity to user during hook execution. Answers folded into additionalContext. Eliminates Claude round-trip for ambiguous prompts |
 | M15 | [PostCompact Rule Persistence](M15-POSTCOMPACT-REINJECT.md) | Not Started | M1, M11 | Session-scoped rule statistics with generation counters track which rules matter. PostCompact hook reinjects top-scored rules with exponential decay weighting. PreCompact hint for compaction summary quality |
 | M16 | [Subagent Rule Alignment](M16-SUBAGENT-ALIGNMENT.md) | Not Started | M1, M11, M8.2 | SubagentStart injects tailored rules based on agent type + task context. Agent-type profiles (Explore/Plan/general). SubagentStop extends verification to subagent output |
 | M17 | [Tool Input Interception](M17-TOOL-INTERCEPT.md) | Not Started | M1, M11 | PreToolUse rewrites wrong package manager/build tool/test runner commands. Auto-discovered from lock files + user-editable corrections in config. Low priority |
 | M18 | [Verification Failure Guidance](M18-TEST-FAILURE-GUIDANCE.md) | Not Started | M1, M11 | PostToolUse injects behavioral directives when tests/linter/typecheck/vet fail. Prevents suppression shortcuts (nolint, as casts, ts-ignore). Links to relevant deep-context docs. Configurable command patterns |
+| M19 | [Ollama Concurrency Management](M19-OLLAMA-CONCURRENCY.md) | Not Started | M2, M11 | Client-side priority queue for Ollama requests. Flock-based advisory lock with preempt signal: refine (high priority) preempts classify (low priority) via context cancellation. Retry logic for preempted documents. Cross-process coordination without daemon |
 
 ---
 
@@ -151,6 +152,35 @@ order: 800
 | 9.5 — Baseline measurement | ❌ | Scores documented in `docs/BASELINE.md` |
 | 9.6 — Regression test gate | ❌ | CI gate on structural compliance |
 
+### M12: Smart Tool Permissions (Done)
+
+| Task | Status | Notes |
+|------|--------|-------|
+| 12.1 — Permission config loader | ✅ Done | `permit/config.go`: YAML schema, `allowed_paths`, `trusted_urls`, `blocked_urls`, `auto_approve_writes`, `always_ask`, `agent_review`, `sensitive_env_patterns` |
+| 12.2 — Path resolver | ✅ Done | `permit/paths.go`: `Canonicalize()` with symlink resolution, `~` expansion, closest-ancestor fallback for new files. `IsInside()`, `IsInsideAny()` |
+| 12.3 — Built-in tool classifier | ✅ Done | `permit/tools.go`: Read/Glob/Grep → ReadOnly, Write/Edit → Write, WebFetch/WebSearch → Network, ToolSearch → AlwaysAllow, Agent → passthrough |
+| 12.4 — Bash command tokenizer | ✅ Done | `permit/bash.go`: Splits on `\|`, `&&`, `\|\|`, `;`. Env var assignment skipping. Redirection + subshell detection |
+| 12.5 — Bash command classifier | ✅ Done | `permit/classify.go`: Read-only, write, network, package manager, git subcommand lists. Destructive root detection via canonicalized paths (not substring matching). `checkDestructiveRm()` handles symlinks + `$HOME` + `/etc` → `/private/etc` on macOS |
+| 12.6 — Exfiltration detector | ✅ Done | `permit/exfil.go`: POST body, curl header, env var expansion, base64, piped sensitive content, private key + API key patterns. Configurable `sensitive_env_patterns` |
+| 12.7 — Permission decision engine | ✅ Done | `permit/decide.go`: 8-tier system. `always_ask` → CategoryAlwaysAllow → ReadOnly → Write → Network → Bash sub-logic. `auto_approve_writes` gating |
+| 12.8 — CLI command | ✅ Done | `cmd/permit.go`: PreToolUse hook handler, panic recovery, graceful degradation (exit 0 on any error), <50ms target |
+| 12.9 — Plugin hook wiring | ✅ Done | PreToolUse in `plugin.json` with 5s timeout. PostToolUse + PostToolUseFailure wired for outcome logging |
+| 12.10 — Path resolution tests | ✅ Done | `classify_test.go`: Destructive roots, false positive prevention, symlink-aware canonicalization |
+| 12.11 — Tool classification tests | ✅ Done | `tools_test.go`: All built-in tools with paths inside/outside project root |
+| 12.12 — Bash tokenizer tests | ✅ Done | Pipes, compounds, env assignments, edge cases |
+| 12.13 — Bash classifier tests | ✅ Done | Read-only, write, network, destructive, unclassifiable commands |
+| 12.14 — Exfil detection tests | ✅ Done | Sensitive patterns, env var references, clean URLs |
+| 12.15 — Decision engine tests | ✅ Done | `decide_test.go`: Full tier coverage, `always_ask` overrides, config variants |
+| 12.16 — Integration test | ✅ Done | End-to-end PreToolUse JSON payloads through `restruct permit` |
+| 12.17 — Agent hook integration | ⏸ Designed | `agent_review` config present, disabled by default. Advisory-only architecture ready |
+| 12.18 — Agent prompt design | ⏸ Designed | Spec complete in M12 doc. Implementation deferred until agent review is enabled |
+| 12.19 — Agent review tests | ⏸ Deferred | Awaiting agent review enablement |
+| 12.20 — Permission event recording | ✅ Done | `tool_decisions` table (migration 008), `RecordToolDecision()`, `UpdateToolOutcome()` with SSE broadcast |
+| 12.21 — Dashboard integration | ✅ Done | History page: Tool Use tab with decision/tool filters, stats bar, SSE real-time updates. RefinementDetail: verification events with tool decisions |
+| 12.22 — SSE broadcasting | ✅ Done | `tool-decision:new` event type, recorder broadcasts on insert + outcome update, frontend `useSSE` subscription |
+
+**Additional work beyond spec:** PostToolUse/PostToolUseFailure outcome logging (`cmd/permit_log.go`), review-permissions skill for proposing auto-approval rules, destructive command detection using canonicalized paths instead of substring matching, SIGTERM handling in verify hooks.
+
 ### M10: Self-Improvement Loop (Not Started)
 
 | Task | Status | Notes |
@@ -187,6 +217,10 @@ These were previously open and have been resolved during implementation:
 | Verification enforcement | Hook exit code 2, not LLM instructions. `restruct verify` runs shell checks and blocks on failure. Claude cannot ignore a hook exit code | M8.2 implementation |
 | Verification scope | Per-check globs filter which checks run against changed files. TypeScript changes don't trigger Go vet | M8.2 implementation |
 | Snapshot strategy | `git ls-files` for discovery (respects .gitignore), mtime+size for diff (fast, no content hashing). Task scope promotes to prompt scope on pass | M8.2 implementation |
+| Tool permission tiers | 8-tier system: read-only project (T1), write project (T2), read allowed (T3), write allowed (T4), trusted network (T5), destructive/deny (T6), passthrough (T7), unclassifiable (T8). Deterministic, <50ms | M12 implementation |
+| Destructive command detection | Canonicalized path comparison against system roots, not substring matching. Prevents false positives (`rm -rf /Users/x/foo` ≠ `rm -rf /`). Handles symlinks (`/etc` → `/private/etc`), `$HOME`, `~` | M12 implementation |
+| Tool outcome logging | PostToolUse + PostToolUseFailure hooks record execution outcomes. Enables review-permissions skill to analyze approval patterns and propose auto-approval rules | M12 implementation |
+| SIGTERM in Stop hooks | Verify command ignores SIGTERM when running as Stop hook. Claude Code sends SIGTERM on cleanup but verifications must complete. SIGKILL at 120s timeout is respected | M8.2 fix |
 | Debug/release | Go build tags (`//go:build debug`). `embed_debug.go` returns nil FS + dev mode, `embed_release.go` embeds web dist | M8.1 implementation |
 | Dev workflow | `pnpm dev` → `xmake watch -d cli -r` (auto-rebuild + restart Go server) + Vite HMR, in parallel via pnpm workspaces | M8.1 implementation |
 
@@ -252,12 +286,12 @@ M1  (Hook Protocol)        ██████████  Done
  │    (M1 + M2 + M5)
  │    SessionStart deep-context, retrieval-augmented refinement
  │
- └── M12 (Tool Permissions)   ░░░░░░░░░░
+ └── M12 (Tool Permissions)   ██████████  Done
       (M1 + M8)
-      PreToolUse auto-approval, exfil detection, permissions.yaml
+      8-tier auto-approval, exfil detection, SSE broadcasting
 ```
 
-**M1–M4, M8.1, and M8.2 are complete.** Major session changes: v4 JSON classification pipeline (M3), LLM-selected rules by index (M5), git stripped to branch+commits with LLM activity summary (M5), 4-panel web detail view with `input_prompt`/`llm_output` (M4), wouter routing (M4), compose.go extraction, dynamic footer, xmake build mode fix, mechanical verification via hooks (M8.2). M5 needs file mention detection. M6 needs SQLite cache migration. M9 at 213 tests with real-data integration tests.
+**M1–M4, M8.1, M8.2, and M12 are complete.** M12 adds 8-tier tool permission auto-approval with path canonicalization, bash tokenization, exfiltration detection, destructive command blocking, PostToolUse outcome logging, SSE broadcasting, and History dashboard integration. M5 needs file mention detection. M6 needs SQLite cache migration. M9 at 213+ tests with real-data integration tests.
 
 ---
 

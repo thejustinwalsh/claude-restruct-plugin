@@ -415,3 +415,43 @@ func (s *Server) handleToolDecisionEvent(w http.ResponseWriter, r *http.Request)
 	s.hub.Broadcast(sse.Event{Type: "tool-decision:new", Data: payload})
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// --- Bootstrap & Context Selection ---
+
+func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	event, err := s.db.GetBootstrapForSession(id)
+	if err != nil {
+		writeJSON(w, http.StatusOK, nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, event)
+}
+
+func (s *Server) handleRefinementContextSelections(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid refinement id")
+		return
+	}
+	selections, err := s.db.GetContextSelections(id)
+	if err != nil {
+		writeJSON(w, http.StatusOK, []db.ContextSelection{})
+		return
+	}
+	if selections == nil {
+		selections = []db.ContextSelection{}
+	}
+	writeJSON(w, http.StatusOK, selections)
+}
+
+func (s *Server) handleBootstrapEvent(w http.ResponseWriter, r *http.Request) {
+	var payload db.BootstrapEvent
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	s.hub.Broadcast(sse.Event{Type: "bootstrap:new", Data: payload})
+	w.WriteHeader(http.StatusNoContent)
+}

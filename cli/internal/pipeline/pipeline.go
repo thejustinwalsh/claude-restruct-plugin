@@ -55,18 +55,27 @@ type TimingResult struct {
 
 // RefineResult contains the pipeline output plus metadata.
 type RefineResult struct {
-	Refined     string
-	InputPrompt string // system + user message sent to the local LLM
-	LLMOutput   string // raw output from the local LLM (before parsing/composition)
-	CacheHit    bool
-	NoContext   bool // LLM determined no additional context needed
-	Timings     []TimingResult
-	TotalTime   time.Duration
+	Refined      string
+	InputPrompt  string // system + user message sent to the local LLM
+	LLMOutput    string // raw output from the local LLM (before parsing/composition)
+	CacheHit     bool
+	NoContext    bool // LLM determined no additional context needed
+	Timings      []TimingResult
+	TotalTime    time.Duration
+	SelectedDocs []int    // indices of deep-context docs selected by the LLM
+	DocSources   []string // source paths of selected docs (for recording)
 }
 
 // NoContextSentinel is the literal string the local LLM outputs when
 // the request is clear and no project rules apply.
 const NoContextSentinel = "NO_ADDITIONAL_CONTEXT"
+
+// MapLoader loads deep-context documents selected by the LLM.
+type MapLoader interface {
+	FormatMapForLLM() string
+	LoadSelected(docIndices []int) (string, map[string]*prompt.ParsedRules, error)
+	SelectedSources(docIndices []int) []string
+}
 
 // Pipeline orchestrates the prompt refinement process.
 type Pipeline struct {
@@ -78,6 +87,7 @@ type Pipeline struct {
 	builder        *prompt.Builder
 	cache          CacheStore
 	cfg            *config.Config
+	mapLoader      MapLoader
 	onInputReady   func(inputPrompt string) // called after prompt build, before LLM inference
 }
 
@@ -111,6 +121,11 @@ func New(cfg *config.Config, cwd string) (*Pipeline, error) {
 func (p *Pipeline) SetSessionProvider(sp SessionProvider, sessionID string) {
 	p.session = sp
 	p.sessionID = sessionID
+}
+
+// SetMapLoader attaches a deep-context map loader for retrieval-augmented refinement.
+func (p *Pipeline) SetMapLoader(ml MapLoader) {
+	p.mapLoader = ml
 }
 
 // SetInputReadyCallback sets a function called after the LLM prompt is built
@@ -213,10 +228,21 @@ func (p *Pipeline) Refine(ctx context.Context, rawPrompt string, sink ollama.Tok
 		}
 	})
 
-	// 6. Build LLM messages (with numbered rules)
+	// 6. Prepare project map for LLM (if available)
+	var projectMapStr string
+	timer("map_load", func() {
+		if p.mapLoader != nil {
+			projectMapStr = p.mapLoader.FormatMapForLLM()
+			if projectMapStr != "" {
+				slog.Debug("project map loaded for LLM", "length", len(projectMapStr))
+			}
+		}
+	})
+
+	// 7. Build LLM messages (with numbered rules + project map)
 	var buildResult *prompt.BuildResult
 	timer("prompt_build", func() {
-		buildResult = p.builder.Build(rawPrompt, rulesContent, gitCtx.String(), sessionCtx)
+		buildResult = p.builder.Build(rawPrompt, rulesContent, gitCtx.String(), sessionCtx, projectMapStr)
 	})
 	result.InputPrompt = "## System Prompt\n" + buildResult.SystemMsg + "\n\n## User Message\n" + buildResult.UserMsg
 
@@ -284,10 +310,25 @@ func (p *Pipeline) Refine(ctx context.Context, rawPrompt string, sink ollama.Tok
 		return nil, llmErr
 	}
 
-	// 12. Compose final context XML from classification + static data + git
+	// 12. Load scoped rules from selected documents (if LLM selected any)
+	var scopedRules map[string]*prompt.ParsedRules
+	if p.mapLoader != nil && len(classification.RelevantDocs) > 0 {
+		timer("doc_load", func() {
+			var err error
+			_, scopedRules, err = p.mapLoader.LoadSelected(classification.RelevantDocs)
+			if err != nil {
+				slog.Warn("failed to load selected documents", "error", err)
+			}
+			result.SelectedDocs = classification.RelevantDocs
+			result.DocSources = p.mapLoader.SelectedSources(classification.RelevantDocs)
+			slog.Debug("loaded scoped rules", "docs", len(classification.RelevantDocs), "sources", result.DocSources)
+		})
+	}
+
+	// 13. Compose final context XML from classification + static data + git
 	var composed string
 	timer("compose", func() {
-		composed = composeContext(classification, buildResult.Rules, gitCtx.Branch)
+		composed = composeContext(classification, buildResult.Rules, scopedRules, gitCtx.Branch)
 	})
 
 	// 13. Cache result
@@ -323,6 +364,7 @@ type LLMClassification struct {
 	RelevantConstraints  []int    `json:"relevant_constraints"`
 	RelevantAntiPats     []int    `json:"relevant_anti_patterns"`
 	Clarification        []string `json:"clarification"`
+	RelevantDocs         []int    `json:"relevant_docs"` // indices into project map
 }
 
 // validTypes is the set of recognized request types.

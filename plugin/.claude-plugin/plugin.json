@@ -19,14 +19,57 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct session start",
-            "timeout": 5
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct bootstrap",
+            "timeout": 10
           },
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct model load",
             "timeout": 30,
             "async": true
+          }
+        ]
+      }
+    ],
+    "FileChanged": [
+      {
+        "matcher": "CLAUDE.md",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct bootstrap --incremental",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "agents.md",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct bootstrap --incremental",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "rules.md",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct bootstrap --incremental",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "InstructionsLoaded": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/restruct bootstrap --instructions-loaded",
+            "timeout": 5
           }
         ]
       }

@@ -77,4 +77,18 @@ Developer request: "how does the caching system work?"
 
 {"type":"question","intent":"Explain caching architecture, key strategy, and invalidation.","recent_activity":"","analysis":["Spans cache/ and pipeline/ packages."],"relevant_rules":[],"relevant_constraints":[],"relevant_anti_patterns":[],"clarification":[]}
 
+## Document selection (when project map is provided)
+
+When a "Project Document Map" section appears in the user message, it lists
+available rule documents by index number. Select which documents are relevant
+to this request by outputting `relevant_docs` as an array of document indices.
+
+Select 0-3 documents. A request about the web UI needs web rules, not CLI
+rules. A request about Go CLI code needs CLI rules, not React rules. Only
+select a document if its rules plausibly apply to this request.
+`"relevant_docs": []` is valid when no documents are relevant.
+
+If no "Project Document Map" section appears, omit `relevant_docs` or set
+it to an empty array.
+
 Output ONLY valid JSON. No explanation, no markdown, no preamble.

@@ -60,7 +60,9 @@ func ParseRules(raw string) *ParsedRules {
 			continue
 		}
 		if strings.HasPrefix(lower, "## do not") ||
-			strings.HasPrefix(lower, "## don't") {
+			strings.HasPrefix(lower, "## don't") ||
+			strings.HasPrefix(lower, "## anti-patterns") ||
+			strings.HasPrefix(lower, "## anti_patterns") {
 			currentSection = "anti"
 			continue
 		}
@@ -130,7 +132,8 @@ type BuildResult struct {
 
 // Build returns the system prompt and user message for the local LLM.
 // The rules are parsed into numbered lists so the LLM can reference by index.
-func (b *Builder) Build(rawPrompt, rules, gitContext, sessionContext string) *BuildResult {
+// projectMap is the formatted project document map (from bootstrap) — empty string if unavailable.
+func (b *Builder) Build(rawPrompt, rules, gitContext, sessionContext string, projectMap ...string) *BuildResult {
 	system := SystemPrompt()
 	parsed := ParseRules(rules)
 
@@ -176,6 +179,17 @@ func (b *Builder) Build(rawPrompt, rules, gitContext, sessionContext string) *Bu
 	if rulesForLLM != "" {
 		sb.WriteString("\n")
 		sb.WriteString(rulesForLLM)
+	}
+
+	// Project document map (from bootstrap) — enables document selection
+	pm := ""
+	if len(projectMap) > 0 {
+		pm = strings.TrimSpace(projectMap[0])
+	}
+	if pm != "" {
+		sb.WriteString("\n")
+		sb.WriteString(pm)
+		sb.WriteString("\n")
 	}
 
 	if gitContext != "" {

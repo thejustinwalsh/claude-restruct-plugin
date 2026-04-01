@@ -167,6 +167,31 @@ export interface ToolDecision {
   created_at: string;
 }
 
+// --- Bootstrap & Context Selection ---
+
+export interface BootstrapEvent {
+  id: number;
+  session_id: string;
+  project_path: string;
+  files_discovered: number;
+  files_processed: number;
+  total_rules: number;
+  classify_status: string;
+  duration_us: number;
+  classify_duration_us: number | null;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface ContextSelection {
+  id: number;
+  refinement_id: number;
+  doc_source: string;
+  doc_hash: string;
+  rules_selected: number;
+  created_at: string;
+}
+
 export interface ToolDecisionStats {
   total: number;
   by_decision: Record<string, number>;
@@ -176,14 +201,14 @@ export interface ToolDecisionStats {
 
 export interface TimelineEventRaw {
   id: number;
-  event_type: 'refinement' | 'tool_decision' | 'verification';
+  event_type: 'refinement' | 'tool_decision' | 'verification' | 'bootstrap';
   timestamp: string;
   payload: string;
 }
 
 export interface TimelineEvent {
   id: string;
-  event_type: 'refinement' | 'tool_decision' | 'verification';
+  event_type: 'refinement' | 'tool_decision' | 'verification' | 'bootstrap';
   timestamp: string;
   summary: string;
   detail: string;
@@ -243,6 +268,17 @@ export function parseTimelineEvents(raw: TimelineEventRaw[]): TimelineEvent[] {
         }
         break;
       }
+      case 'bootstrap': {
+        const bMs = Math.round((p.duration_us || 0) / 1000);
+        summary = `bootstrap: ${p.files_discovered} files, ${p.total_rules} rules in ${bMs}ms`;
+        if (p.classify_status === 'complete' && p.classify_duration_us) {
+          detail = `classified in ${(p.classify_duration_us / 1_000_000).toFixed(1)}s`;
+        } else {
+          detail = `classify: ${p.classify_status || 'pending'}`;
+        }
+        status = p.classify_status || 'pending';
+        break;
+      }
     }
 
     return {
@@ -298,6 +334,12 @@ export const api = {
     fetchJSON<VerificationEvent[]>(
       `/sessions/${id}/verifications?limit=${limit}&offset=${offset}`,
     ),
+
+  // Bootstrap & context
+  sessionBootstrap: (id: string) =>
+    fetchJSON<BootstrapEvent | null>(`/sessions/${id}/bootstrap`),
+  refinementContextSelections: (id: number) =>
+    fetchJSON<ContextSelection[]>(`/refinements/${id}/context-selections`),
 
   // Timeline
   sessionTimeline: async (id: string, limit = 200, offset = 0) => {

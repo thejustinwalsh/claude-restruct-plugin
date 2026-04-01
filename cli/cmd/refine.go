@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/tjw/restruct/internal/bootstrap"
 	"github.com/tjw/restruct/internal/config"
 	"github.com/tjw/restruct/internal/db"
 	"github.com/tjw/restruct/internal/hook"
@@ -128,6 +129,25 @@ are appended as additional context that guides Claude's behavior.`,
 			return hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
 		}
 
+		// Attach deep-context map loader for retrieval-augmented refinement.
+		// When available, the LLM sees the project map and selects relevant docs.
+		// Lazy re-index: if any rule files changed since last bootstrap, re-process
+		// them inline before refinement. This replaces the FileChanged hook which
+		// isn't supported in plugin manifests yet.
+		linksDir := bootstrap.LinksDir(projectDir)
+		if ml := bootstrap.NewMapLoader(linksDir); ml != nil {
+			if stale := ml.StaleFiles(); len(stale) > 0 {
+				slog.Info("re-indexing stale rule files before refinement", "stale_files", stale)
+				bootstrap.ReindexStale(ml.Map(), linksDir, cfg.Rules.Files)
+				// Reload the map after re-indexing
+				ml = bootstrap.NewMapLoader(linksDir)
+			}
+			if ml != nil {
+				p.SetMapLoader(ml)
+				slog.Debug("map loader attached", "files", len(ml.Map().Files))
+			}
+		}
+
 		// Attach session context provider so the local LLM can see
 		// recent conversation history (intents from prior refinements).
 		if database != nil && sessionID != "" {
@@ -201,6 +221,23 @@ are appended as additional context that guides Claude's behavior.`,
 			})
 			for _, t := range result.Timings {
 				recorder.RecordPipelineEvent(refID, t.Stage, t.Duration.Microseconds(), true, "")
+			}
+
+			// Record which deep-context documents were selected
+			if len(result.SelectedDocs) > 0 && len(result.DocSources) > 0 {
+				var selections []db.ContextSelection
+				for i, idx := range result.SelectedDocs {
+					source := ""
+					if i < len(result.DocSources) {
+						source = result.DocSources[i]
+					}
+					_ = idx
+					selections = append(selections, db.ContextSelection{
+						DocSource: source,
+						DocHash:   "", // hash would require re-loading map; source is sufficient
+					})
+				}
+				recorder.RecordContextSelections(refID, selections)
 			}
 		}
 

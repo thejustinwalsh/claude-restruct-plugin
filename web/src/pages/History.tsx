@@ -263,13 +263,14 @@ const EVENT_TYPE_OPTIONS = [
   { value: 'refinement', label: 'Refinements' },
   { value: 'tool_decision', label: 'Tools' },
   { value: 'verification', label: 'Verify' },
+  { value: 'bootstrap', label: 'Context' },
 ];
 
 // ---------------------------------------------------------------------------
 // Shared flex row primitives
 // ---------------------------------------------------------------------------
 
-const ROW_CLS = 'flex h-(--row-h) items-center gap-0 px-3 text-sm';
+const ROW_CLS = 'flex h-[33px] items-center gap-0 px-3 text-sm';
 const HEADER_ROW = `${ROW_CLS} border-b text-xs font-medium text-foreground`;
 const DATA_ROW = `${ROW_CLS} border-b transition-colors hover:bg-muted/50`;
 
@@ -672,16 +673,18 @@ export function History({ selectedSessionId }: { selectedSessionId?: string }) {
     (sid) => readFiltersFromURL(sid),
   );
 
-  // Derive effective session: filters.session > active > most recent
+  // Derive effective session: filters.session > most recent active > most recent
   const sessionId = useMemo(() => {
     if (filters.session) return filters.session;
     if (sessions.length === 0) return '';
-    const active = sessions.find((s) => s.status === 'active');
-    if (active) return active.id;
-    return [...sessions].sort(
-      (a, b) =>
-        new Date(b.started_at).getTime() - new Date(a.started_at).getTime(),
-    )[0].id;
+    const sorted = [...sessions].sort((a, b) => {
+      if (a.status === 'active' && b.status !== 'active') return -1;
+      if (b.status === 'active' && a.status !== 'active') return 1;
+      return (
+        new Date(b.started_at).getTime() - new Date(a.started_at).getTime()
+      );
+    });
+    return sorted[0].id;
   }, [filters.session, sessions]);
 
   // Sync all state to URL whenever anything changes (including auto-selected session)
@@ -877,30 +880,16 @@ export function History({ selectedSessionId }: { selectedSessionId?: string }) {
   }, [verifications, vfType, vfResult, search]);
 
   /*
-   * Table height strategy (CSS container queries + flex fill):
+   * Table height strategy: flex chain fills available space.
    *
-   * 1. Flex chain (root → main → History → wrapper) gives the table
-   *    wrapper its natural remaining height — no magic px/rem offset.
-   * 2. The wrapper is a CSS container (container-type: size).
-   * 3. The table reads that height via 100cqb (container query block),
-   *    then uses round(down, ..., --row-h) to snap to a row multiple.
+   * The wrapper (min-h-0 flex-1) gets its height from the flex parent.
+   * The table is a flex column that fills the wrapper (h-full).
+   * The list body is flex-1 min-h-0, taking remaining space after the header.
    *
-   * --row-h:  row height (shared with JS ROW_HEIGHT for LegendList)
-   * --bdr:    container top border (bottom border overlaps last row's border-b)
+   * Previously used CSS container queries (100cqb) but container-type: size
+   * on flex children resolves block dimension to 0 in Chrome — the flex
+   * algorithm hasn't assigned a definite height before containment evaluates.
    */
-  const tableStyle = {
-    '--row-h': '33px',
-    '--bdr': '1px',
-    '--body':
-      'round(down, calc(100cqb - var(--bdr) - var(--row-h)), var(--row-h))',
-    height: 'calc(var(--bdr) + var(--row-h) + var(--body))',
-    minHeight: 'calc(var(--bdr) + var(--row-h) * 6)',
-  } as React.CSSProperties;
-
-  const listStyle = {
-    height: 'var(--body)',
-    overflow: 'hidden',
-  } as React.CSSProperties;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -913,11 +902,14 @@ export function History({ selectedSessionId }: { selectedSessionId?: string }) {
           </SelectTrigger>
           <SelectContent className="w-[340px]">
             {[...sessions]
-              .sort(
-                (a, b) =>
+              .sort((a, b) => {
+                if (a.status === 'active' && b.status !== 'active') return -1;
+                if (b.status === 'active' && a.status !== 'active') return 1;
+                return (
                   new Date(b.started_at).getTime() -
-                  new Date(a.started_at).getTime(),
-              )
+                  new Date(a.started_at).getTime()
+                );
+              })
               .map((s) => (
                 <SelectItem key={s.id} value={s.id}>
                   <span className="flex items-center gap-2">
@@ -1003,13 +995,10 @@ export function History({ selectedSessionId }: { selectedSessionId?: string }) {
             <TimelineStats timeline={filteredTimeline} all={timeline} />
           </div>
 
-          <div className="min-h-0 flex-1" style={{ containerType: 'size' }}>
-            <div
-              className="overflow-hidden rounded-lg border"
-              style={tableStyle}
-            >
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border">
               <TimelineHeader />
-              <div style={listStyle}>
+              <div className="min-h-0 flex-1 overflow-hidden">
                 {loading ? (
                   <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2">
                     <ListIcon className="text-border size-8" />
@@ -1075,13 +1064,10 @@ export function History({ selectedSessionId }: { selectedSessionId?: string }) {
             />
           </div>
 
-          <div className="min-h-0 flex-1" style={{ containerType: 'size' }}>
-            <div
-              className="overflow-hidden rounded-lg border"
-              style={tableStyle}
-            >
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border">
               <ToolDecisionHeader />
-              <div style={listStyle}>
+              <div className="min-h-0 flex-1 overflow-hidden">
                 {loading ? (
                   <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2">
                     <ListIcon className="text-border size-8" />
@@ -1133,13 +1119,10 @@ export function History({ selectedSessionId }: { selectedSessionId?: string }) {
             />
           </div>
 
-          <div className="min-h-0 flex-1" style={{ containerType: 'size' }}>
-            <div
-              className="overflow-hidden rounded-lg border"
-              style={tableStyle}
-            >
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border">
               <VerificationHeader />
-              <div style={listStyle}>
+              <div className="min-h-0 flex-1 overflow-hidden">
                 {loading ? (
                   <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2">
                     <ListIcon className="text-border size-8" />

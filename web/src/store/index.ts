@@ -62,6 +62,9 @@ interface AppState {
   // Stats
   stats: StatsData | null;
 
+  // Bootstrap
+  bootstrapEvents: Map<string, import('@/api/client').BootstrapEvent>;
+
   // Actions
   setConnected: (v: boolean) => void;
 
@@ -108,6 +111,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   metrics: null,
   sessions: [],
   stats: null,
+  bootstrapEvents: new Map(),
 
   setConnected: (v) => set({ connected: v }),
 
@@ -291,9 +295,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   syncFromDB: async () => {
     try {
-      const [dbRecent, metrics] = await Promise.all([
+      const [dbRecent, metrics, freshSessions] = await Promise.all([
         api.refinements(50),
         api.metrics(),
+        api.sessions(),
       ]);
       const refs = new Map(get().refinements);
       const dbMap = new Map(dbRecent.map((r) => [r.id, r]));
@@ -328,7 +333,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
 
-      set({ refinements: refs, metrics, stream: nextStream });
+      set({
+        refinements: refs,
+        metrics,
+        sessions: freshSessions,
+        stream: nextStream,
+      });
     } catch {
       /* ignore */
     }
@@ -381,6 +391,12 @@ export function useSessions(): Session[] {
 /** Stats data */
 export function useStats(): StatsData | null {
   return useAppStore((s) => s.stats);
+}
+
+export function useBootstrapEvent(
+  sessionId: string,
+): import('@/api/client').BootstrapEvent | undefined {
+  return useAppStore((s) => s.bootstrapEvents.get(sessionId));
 }
 
 /** Store actions (stable references, never cause re-render) */
@@ -504,6 +520,14 @@ function handleSSEEvent(evt: SSEEvent) {
           useAppStore.setState({ refinementDetails: details });
         }
       }
+      break;
+    }
+    case 'bootstrap:new':
+    case 'bootstrap:classify': {
+      const be = evt.data;
+      const bmap = new Map(s.bootstrapEvents);
+      bmap.set(be.session_id, be);
+      useAppStore.setState({ bootstrapEvents: bmap });
       break;
     }
   }

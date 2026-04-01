@@ -666,13 +666,21 @@ type VerificationEvent struct {
 }
 
 func (d *DB) InsertVerificationEvent(e *VerificationEvent) error {
-	_, err := d.pool.Exec(`
+	res, err := d.pool.Exec(`
 		INSERT INTO verification_events (session_id, refinement_id, scope, hook_event, event_type, file_count, duration_us, cwd_input, project_dir, changed_files, checks_run, result)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.SessionID, e.RefinementID, e.Scope, e.HookEvent, e.EventType, e.FileCount, e.DurationUs,
 		e.CwdInput, e.ProjectDir, e.ChangedFiles, e.ChecksRun, e.Result,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	id, _ := res.LastInsertId()
+	e.ID = id
+	if e.CreatedAt.IsZero() {
+		e.CreatedAt = time.Now().UTC()
+	}
+	return nil
 }
 
 // LatestRefinementID returns the most recent refinement ID for a session.
@@ -1046,9 +1054,31 @@ func (d *DB) GetTimelineEvents(sessionID string, limit, offset int) ([]TimelineE
 				) AS payload
 			FROM verification_events
 			WHERE session_id = ?
+
+			UNION ALL
+
+			SELECT
+				id,
+				'bootstrap' AS event_type,
+				created_at AS timestamp,
+				json_object(
+					'id', id,
+					'session_id', session_id,
+					'project_path', project_path,
+					'files_discovered', files_discovered,
+					'files_processed', files_processed,
+					'total_rules', total_rules,
+					'classify_status', classify_status,
+					'duration_us', duration_us,
+					'classify_duration_us', classify_duration_us,
+					'error_message', error_message,
+					'created_at', created_at
+				) AS payload
+			FROM bootstrap_events
+			WHERE session_id = ?
 		)
 		ORDER BY timestamp DESC
-		LIMIT ? OFFSET ?`, sessionID, sessionID, sessionID, limit, offset)
+		LIMIT ? OFFSET ?`, sessionID, sessionID, sessionID, sessionID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -1063,4 +1093,115 @@ func (d *DB) GetTimelineEvents(sessionID string, limit, offset int) ([]TimelineE
 		events = append(events, e)
 	}
 	return events, rows.Err()
+}
+
+// --- Bootstrap events ---
+
+// BootstrapEvent records a project context bootstrap at session start.
+type BootstrapEvent struct {
+	ID                 int64     `json:"id"`
+	SessionID          string    `json:"session_id"`
+	ProjectPath        string    `json:"project_path"`
+	FilesDiscovered    int       `json:"files_discovered"`
+	FilesProcessed     int       `json:"files_processed"`
+	TotalRules         int       `json:"total_rules"`
+	ClassifyStatus     string    `json:"classify_status"`
+	DurationUs         int64     `json:"duration_us"`
+	ClassifyDurationUs *int64    `json:"classify_duration_us,omitempty"`
+	ErrorMessage       *string   `json:"error_message,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+func (d *DB) InsertBootstrapEvent(e *BootstrapEvent) (int64, error) {
+	res, err := d.pool.Exec(`
+		INSERT INTO bootstrap_events (session_id, project_path, files_discovered, files_processed, total_rules, classify_status, duration_us, error_message)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.SessionID, e.ProjectPath, e.FilesDiscovered, e.FilesProcessed,
+		e.TotalRules, e.ClassifyStatus, e.DurationUs, e.ErrorMessage,
+	)
+	if err != nil {
+		return 0, err
+	}
+	id, _ := res.LastInsertId()
+	e.ID = id
+	return id, nil
+}
+
+func (d *DB) UpdateBootstrapClassify(id int64, status string, durationUs int64, errMsg *string) error {
+	_, err := d.pool.Exec(`
+		UPDATE bootstrap_events SET classify_status = ?, classify_duration_us = ?, error_message = ?
+		WHERE id = ?`,
+		status, durationUs, errMsg, id,
+	)
+	return err
+}
+
+func (d *DB) GetBootstrapForSession(sessionID string) (*BootstrapEvent, error) {
+	var e BootstrapEvent
+	err := d.pool.QueryRow(`
+		SELECT id, session_id, project_path, files_discovered, files_processed, total_rules,
+			classify_status, duration_us, classify_duration_us, error_message, created_at
+		FROM bootstrap_events WHERE session_id = ? ORDER BY created_at DESC LIMIT 1`, sessionID,
+	).Scan(&e.ID, &e.SessionID, &e.ProjectPath, &e.FilesDiscovered, &e.FilesProcessed,
+		&e.TotalRules, &e.ClassifyStatus, &e.DurationUs, &e.ClassifyDurationUs,
+		&e.ErrorMessage, &e.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
+// --- Context selections ---
+
+// ContextSelection records which deep-context document the LLM selected during refinement.
+type ContextSelection struct {
+	ID            int64     `json:"id"`
+	RefinementID  int64     `json:"refinement_id"`
+	DocSource     string    `json:"doc_source"`
+	DocHash       string    `json:"doc_hash"`
+	RulesSelected int       `json:"rules_selected"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+func (d *DB) InsertContextSelections(refinementID int64, selections []ContextSelection) error {
+	tx, err := d.pool.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO context_selections (refinement_id, doc_source, doc_hash, rules_selected)
+		VALUES (?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, s := range selections {
+		if _, err := stmt.Exec(refinementID, s.DocSource, s.DocHash, s.RulesSelected); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (d *DB) GetContextSelections(refinementID int64) ([]ContextSelection, error) {
+	rows, err := d.pool.Query(`
+		SELECT id, refinement_id, doc_source, doc_hash, rules_selected, created_at
+		FROM context_selections WHERE refinement_id = ?`, refinementID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sels []ContextSelection
+	for rows.Next() {
+		var s ContextSelection
+		if err := rows.Scan(&s.ID, &s.RefinementID, &s.DocSource, &s.DocHash, &s.RulesSelected, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		sels = append(sels, s)
+	}
+	return sels, rows.Err()
 }

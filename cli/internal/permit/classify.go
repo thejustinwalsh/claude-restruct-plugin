@@ -1,6 +1,7 @@
 package permit
 
 import (
+	"os"
 	"strings"
 )
 
@@ -83,14 +84,21 @@ var packageManagers = map[string]bool{
 	"tsc": true, "eslint": true, "prettier": true, "gofmt": true, "rustfmt": true,
 }
 
-// destructivePatterns that should always be denied.
-var destructivePatterns = []string{
-	"rm -rf /",
-	"rm -rf ~",
-	"rm -rf $HOME",
+// destructiveSubstrings are patterns checked via simple substring match.
+// These don't involve path arguments that could false-positive.
+var destructiveSubstrings = []string{
 	"> /dev/",
 	"dd if=",
 	"mkfs.",
+}
+
+// destructiveRoots are canonicalized paths that rm should never target.
+// Checked against resolved paths, not raw command strings, so
+// traversal tricks (../../, symlinks) can't bypass them.
+var destructiveRoots = []string{
+	"/",
+	"/bin", "/sbin", "/usr", "/etc", "/var", "/System", "/Library",
+	"/boot", "/dev", "/proc", "/sys",
 }
 
 // ClassifyBash analyzes tokenized bash command segments.
@@ -106,13 +114,22 @@ func ClassifyBash(tokens []BashToken, fullCommand string) BashClassification {
 		return result
 	}
 
-	// Check for destructive patterns in the full command
-	for _, pattern := range destructivePatterns {
+	// Check for destructive substring patterns (non-path)
+	for _, pattern := range destructiveSubstrings {
 		if strings.Contains(fullCommand, pattern) {
 			result.IsDestructive = true
 			result.Description = "Destructive command pattern: " + pattern
 			return result
 		}
+	}
+
+	// Check rm commands against destructive roots using canonicalized paths.
+	// This prevents false positives (rm -rf /Users/x/foo ≠ rm -rf /)
+	// while catching traversal tricks (rm -rf /tmp/../../etc).
+	if reason := checkDestructiveRm(tokens); reason != "" {
+		result.IsDestructive = true
+		result.Description = reason
+		return result
 	}
 
 	allReadOnly := true
@@ -272,6 +289,60 @@ func isURL(s string) bool {
 	return strings.HasPrefix(s, "http://") ||
 		strings.HasPrefix(s, "https://") ||
 		strings.HasPrefix(s, "ftp://")
+}
+
+// checkDestructiveRm checks if any rm/rmdir token targets a destructive root
+// after full path canonicalization (symlink resolution, traversal normalization).
+// expandHomePlaceholders replaces $HOME and ${HOME} with the actual home dir
+// so the canonicalizer can resolve them. Shell doesn't run before us.
+func expandHomePlaceholders(arg string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return arg
+	}
+	arg = strings.ReplaceAll(arg, "${HOME}", home)
+	arg = strings.ReplaceAll(arg, "$HOME", home)
+	return arg
+}
+
+// checkDestructiveRm checks if any rm/rmdir token targets a destructive root
+// after full path canonicalization (symlink resolution, traversal normalization).
+func checkDestructiveRm(tokens []BashToken) string {
+	home, _ := os.UserHomeDir()
+	for _, tok := range tokens {
+		cmd := tok.Command
+		if strings.Contains(cmd, "/") {
+			parts := strings.Split(cmd, "/")
+			cmd = parts[len(parts)-1]
+		}
+		if cmd != "rm" && cmd != "rmdir" {
+			continue
+		}
+		for _, arg := range tok.Args {
+			if strings.HasPrefix(arg, "-") {
+				continue
+			}
+			expanded := expandHomePlaceholders(arg)
+			resolved := Canonicalize(expanded)
+			if resolved == "" {
+				continue
+			}
+			// Check home directory
+			if home != "" && resolved == home {
+				return "Destructive target: home directory"
+			}
+			// Check system roots — match against both the resolved path
+			// and the canonical form of each root (handles macOS symlinks
+			// like /etc → /private/etc).
+			for _, root := range destructiveRoots {
+				canonRoot := Canonicalize(root)
+				if resolved == root || resolved == canonRoot {
+					return "Destructive target: " + root
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func extractPathArgs(args []string) []string {
