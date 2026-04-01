@@ -89,7 +89,7 @@ cleanup() {
     exit 0
 }
 
-trap cleanup INT TERM
+trap cleanup INT TERM HUP EXIT
 
 # Initial launch
 start_server
