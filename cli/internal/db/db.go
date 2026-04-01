@@ -860,3 +860,164 @@ func (d *DB) GetToolDecisionStats(sessionID string) (*ToolDecisionStats, error) 
 	d.pool.QueryRow("SELECT COUNT(*) FROM tool_decisions WHERE reviewed = FALSE AND hook_decision = 'passthrough' AND outcome = 'executed'").Scan(&s.UnreviewedCount)
 	return s, nil
 }
+
+// ListToolDecisions returns all tool decisions, newest first.
+func (d *DB) ListToolDecisions(limit, offset int) ([]ToolDecision, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := d.pool.Query(`
+		SELECT id, session_id, project_path, tool_name, tool_input_summary, tool_use_id,
+			hook_decision, hook_tier, hook_reason, hook_duration_us,
+			outcome, tool_duration_ms, reviewed, reviewed_at, created_at
+		FROM tool_decisions
+		ORDER BY created_at DESC LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var decisions []ToolDecision
+	for rows.Next() {
+		var td ToolDecision
+		if err := rows.Scan(&td.ID, &td.SessionID, &td.ProjectPath, &td.ToolName,
+			&td.ToolInputSummary, &td.ToolUseID, &td.HookDecision, &td.HookTier,
+			&td.HookReason, &td.HookDurationUs, &td.Outcome, &td.ToolDurationMs,
+			&td.Reviewed, &td.ReviewedAt, &td.CreatedAt); err != nil {
+			return nil, err
+		}
+		decisions = append(decisions, td)
+	}
+	return decisions, rows.Err()
+}
+
+// ListToolDecisionsBySession returns tool decisions for a session, newest first.
+func (d *DB) ListToolDecisionsBySession(sessionID string, limit, offset int) ([]ToolDecision, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := d.pool.Query(`
+		SELECT id, session_id, project_path, tool_name, tool_input_summary, tool_use_id,
+			hook_decision, hook_tier, hook_reason, hook_duration_us,
+			outcome, tool_duration_ms, reviewed, reviewed_at, created_at
+		FROM tool_decisions
+		WHERE session_id = ?
+		ORDER BY created_at DESC LIMIT ? OFFSET ?`, sessionID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var decisions []ToolDecision
+	for rows.Next() {
+		var td ToolDecision
+		if err := rows.Scan(&td.ID, &td.SessionID, &td.ProjectPath, &td.ToolName,
+			&td.ToolInputSummary, &td.ToolUseID, &td.HookDecision, &td.HookTier,
+			&td.HookReason, &td.HookDurationUs, &td.Outcome, &td.ToolDurationMs,
+			&td.Reviewed, &td.ReviewedAt, &td.CreatedAt); err != nil {
+			return nil, err
+		}
+		decisions = append(decisions, td)
+	}
+	return decisions, rows.Err()
+}
+
+// TimelineEvent is a unified event from refinements, tool_decisions, or verification_events.
+type TimelineEvent struct {
+	ID        int64  `json:"id"`
+	EventType string `json:"event_type"`
+	Timestamp string `json:"timestamp"`
+	Payload   string `json:"payload"`
+}
+
+// GetTimelineEvents returns a unified chronological list of refinements, tool_decisions,
+// and verification_events for a session, ordered by created_at DESC.
+func (d *DB) GetTimelineEvents(sessionID string, limit, offset int) ([]TimelineEvent, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := d.pool.Query(`
+		SELECT id, event_type, timestamp, payload FROM (
+			SELECT
+				id,
+				'refinement' AS event_type,
+				created_at AS timestamp,
+				json_object(
+					'id', id,
+					'session_id', session_id,
+					'project_path', project_path,
+					'raw_prompt', raw_prompt,
+					'refined_prompt', refined_prompt,
+					'model', model,
+					'latency_ms', latency_ms,
+					'cache_hit', cache_hit,
+					'passthrough', passthrough,
+					'status', status,
+					'created_at', created_at
+				) AS payload
+			FROM refinements
+			WHERE session_id = ?
+
+			UNION ALL
+
+			SELECT
+				id,
+				'tool_decision' AS event_type,
+				created_at AS timestamp,
+				json_object(
+					'id', id,
+					'session_id', session_id,
+					'project_path', project_path,
+					'tool_name', tool_name,
+					'tool_input_summary', tool_input_summary,
+					'tool_use_id', tool_use_id,
+					'hook_decision', hook_decision,
+					'hook_tier', hook_tier,
+					'hook_reason', hook_reason,
+					'hook_duration_us', hook_duration_us,
+					'outcome', outcome,
+					'tool_duration_ms', tool_duration_ms,
+					'reviewed', reviewed,
+					'created_at', created_at
+				) AS payload
+			FROM tool_decisions
+			WHERE session_id = ?
+
+			UNION ALL
+
+			SELECT
+				id,
+				'verification' AS event_type,
+				created_at AS timestamp,
+				json_object(
+					'id', id,
+					'session_id', session_id,
+					'refinement_id', refinement_id,
+					'scope', scope,
+					'hook_event', hook_event,
+					'event_type', event_type,
+					'file_count', file_count,
+					'duration_us', duration_us,
+					'result', result,
+					'created_at', created_at
+				) AS payload
+			FROM verification_events
+			WHERE session_id = ?
+		)
+		ORDER BY timestamp DESC
+		LIMIT ? OFFSET ?`, sessionID, sessionID, sessionID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []TimelineEvent
+	for rows.Next() {
+		var e TimelineEvent
+		if err := rows.Scan(&e.ID, &e.EventType, &e.Timestamp, &e.Payload); err != nil {
+			return nil, err
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}

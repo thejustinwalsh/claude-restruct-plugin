@@ -5,6 +5,7 @@ import { Dashboard } from '@/pages/Dashboard';
 import { Sessions } from '@/pages/Sessions';
 import { RefinementDetail } from '@/pages/RefinementDetail';
 import { Stats } from '@/pages/Stats';
+import { History } from '@/pages/History';
 import { api } from '@/api/client';
 import type { ServerInfo } from '@/api/client';
 import { useState } from 'react';
@@ -65,6 +66,7 @@ function App() {
           <Link href="/" className="text-lg font-bold">restruct</Link>
           <NavLink href="/">Dashboard</NavLink>
           <NavLink href="/sessions">Sessions</NavLink>
+          <NavLink href="/history">History</NavLink>
           <NavLink href="/stats">Stats</NavLink>
         </div>
       </nav>
@@ -80,6 +82,12 @@ function App() {
           </Route>
           <Route path="/refinements/:id">
             {(params) => <RefinementDetailRoute id={params.id} />}
+          </Route>
+          <Route path="/history">
+            {() => <History />}
+          </Route>
+          <Route path="/history/:id">
+            {(params) => <History selectedSessionId={params.id} />}
           </Route>
           <Route path="/stats" component={Stats} />
           <Route>

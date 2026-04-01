@@ -306,6 +306,76 @@ func (s *Server) handleStreamError(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// --- Tool decision endpoints ---
+
+func (s *Server) handleListToolDecisions(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+
+	decisions, err := s.db.ListToolDecisions(limit, offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if decisions == nil {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+	writeJSON(w, http.StatusOK, decisions)
+}
+
+func (s *Server) handleToolDecisionStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.db.GetToolDecisionStats("")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func (s *Server) handleSessionToolDecisions(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+
+	decisions, err := s.db.ListToolDecisionsBySession(id, limit, offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if decisions == nil {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+	writeJSON(w, http.StatusOK, decisions)
+}
+
+func (s *Server) handleSessionTimeline(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+
+	events, err := s.db.GetTimelineEvents(id, limit, offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if events == nil {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+	writeJSON(w, http.StatusOK, events)
+}
+
 func (s *Server) handleVerificationEvent(w http.ResponseWriter, r *http.Request) {
 	var payload db.VerificationEvent
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
