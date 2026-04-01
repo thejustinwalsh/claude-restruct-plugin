@@ -45,3 +45,6 @@
 - Do not build custom web components when shadcn has one
 - Do not send any user data to external services — local-only
 - Do not `cd` into `cli/` or `web/` — it breaks session CWD and causes hooks to miss CLAUDE.md. All commands run from project root
+
+## Design
+- Design context and principles in @web/CLAUDE.md
