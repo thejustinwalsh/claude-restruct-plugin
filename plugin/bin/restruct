@@ -12,4 +12,11 @@ if [ ! -x "$BINARY" ]; then
   echo "restruct: no binary for ${OS}-${ARCH}" >&2
   exit 1
 fi
-exec "$BINARY" "$@"
+
+# Run binary (not exec) so we can diagnose unexpected exit codes.
+"$BINARY" "$@"
+rc=$?
+if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+  echo "restruct: unexpected exit code $rc from $BINARY $*" >&2
+fi
+exit $rc
