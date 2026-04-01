@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Route, Switch, Link, useLocation, useRoute } from 'wouter';
+import { useConnected } from '@/store';
 import '@/store'; // side-effect: initializes SSE bridge + periodic sync
 import { Dashboard } from '@/pages/Dashboard';
 import { Sessions } from '@/pages/Sessions';
@@ -13,14 +14,17 @@ import { useState } from 'react';
 function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
   const [isActive] = useRoute(href === '/' ? '/' : `${href}/:rest*`);
   const [isExact] = useRoute(href);
-  const active = href === '/' ? isExact : isActive;
+  const active = href === '/' ? isExact : isActive || isExact;
 
   return (
     <Link
       href={href}
-      className={`text-sm ${active ? 'text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+      className={`relative py-3 text-sm transition-colors ${active ? 'text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}`}
     >
       {children}
+      {active && (
+        <span className="bg-foreground absolute inset-x-0 -bottom-px h-0.5 rounded-full" />
+      )}
     </Link>
   );
 }
@@ -52,6 +56,16 @@ function RefinementDetailRoute({ id }: { id: string }) {
   );
 }
 
+function LiveIndicator() {
+  const connected = useConnected();
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs ${connected ? 'text-muted-foreground' : 'text-red-500'}`}>
+      <span className={`inline-block h-1.5 w-1.5 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500 animate-pulse'}`} />
+      {connected ? 'Live' : 'Disconnected'}
+    </span>
+  );
+}
+
 function App() {
   const [info, setInfo] = useState<ServerInfo | null>(null);
 
@@ -68,10 +82,11 @@ function App() {
           <NavLink href="/sessions">Sessions</NavLink>
           <NavLink href="/history">History</NavLink>
           <NavLink href="/stats">Stats</NavLink>
+          <span className="ml-auto"><LiveIndicator /></span>
         </div>
       </nav>
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-6">
         <Switch>
           <Route path="/" component={DashboardRoute} />
           <Route path="/sessions">

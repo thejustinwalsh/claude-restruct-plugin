@@ -190,7 +190,7 @@ export interface TimelineEvent {
   status: string;
 }
 
-function parseTimelineEvents(raw: TimelineEventRaw[]): TimelineEvent[] {
+export function parseTimelineEvents(raw: TimelineEventRaw[]): TimelineEvent[] {
   return raw.map((r) => {
     const p = JSON.parse(r.payload);
     let summary = '';
@@ -212,11 +212,37 @@ function parseTimelineEvents(raw: TimelineEventRaw[]): TimelineEvent[] {
         detail = p.hook_reason || '';
         status = p.hook_decision || '';
         break;
-      case 'verification':
-        summary = `${p.event_type || 'verify'} (${p.scope || 'prompt'})`;
-        detail = p.file_count ? `${p.file_count} files` : '';
-        status = p.result || '';
+      case 'verification': {
+        const isSnapshot = p.event_type === 'snapshot';
+        status = isSnapshot ? 'snapshot' : p.result || 'verify';
+        if (isSnapshot) {
+          summary = p.file_count
+            ? `snapshot · ${p.file_count} files`
+            : 'snapshot';
+          detail = p.scope || '';
+        } else {
+          if (p.checks_run) {
+            try {
+              const checks = JSON.parse(p.checks_run) as {
+                name: string;
+                passed: boolean;
+              }[];
+              const failed = checks.filter((c) => !c.passed);
+              if (failed.length > 0) {
+                summary = `${checks.map((c) => c.name).join(', ')} · failed: ${failed.map((c) => c.name).join(', ')}`;
+              } else {
+                summary = `${checks.map((c) => c.name).join(', ')} · all passed`;
+              }
+            } catch {
+              summary = 'verify';
+            }
+          } else {
+            summary = 'verify';
+          }
+          detail = p.file_count ? `${p.file_count} files changed` : '';
+        }
         break;
+      }
     }
 
     return {
@@ -265,6 +291,12 @@ export const api = {
   sessionToolDecisions: (id: string, limit = 100, offset = 0) =>
     fetchJSON<ToolDecision[]>(
       `/sessions/${id}/tool-decisions?limit=${limit}&offset=${offset}`,
+    ),
+
+  // Verifications
+  sessionVerifications: (id: string, limit = 200, offset = 0) =>
+    fetchJSON<VerificationEvent[]>(
+      `/sessions/${id}/verifications?limit=${limit}&offset=${offset}`,
     ),
 
   // Timeline

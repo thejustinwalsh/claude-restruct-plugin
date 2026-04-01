@@ -1,9 +1,4 @@
-import {
-  useRefinementsList,
-  useStream,
-  useConnected,
-  useMetrics,
-} from '@/store';
+import { useRefinementsList, useStream, useMetrics } from '@/store';
 import type { Refinement } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -77,7 +72,6 @@ export function Dashboard({
   onSelectRefinement: (id: number) => void;
 }) {
   const metrics = useMetrics();
-  const connected = useConnected();
   const stream = useStream();
   const allRefinements = useRefinementsList();
 
@@ -85,9 +79,6 @@ export function Dashboard({
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Restruct Dashboard</h1>
-        <Badge variant={connected ? 'default' : 'destructive'}>
-          {connected ? 'Live' : 'Disconnected'}
-        </Badge>
       </div>
 
       {metrics && (

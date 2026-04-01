@@ -168,8 +168,6 @@ function SessionPanel({
   const { fetchSessionRefinements } = useActions();
 
   useEffect(() => {
-    setMetrics(null);
-    setRefinements([]);
     api
       .sessionStats(session.id)
       .then(setMetrics)
@@ -302,6 +300,7 @@ export function Sessions({
       <div className="flex-1 overflow-y-auto p-6">
         {selectedSession ? (
           <SessionPanel
+            key={selectedSession.id}
             session={selectedSession}
             onSelectRefinement={onSelectRefinement}
           />

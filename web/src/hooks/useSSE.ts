@@ -9,6 +9,7 @@ import type {
   Refinement,
   PipelineEvent,
   VerificationEvent,
+  ToolDecision,
 } from '@/api/client';
 import { api } from '@/api/client';
 
@@ -57,6 +58,7 @@ export interface StreamComplete {
 export type SSEEvent =
   | { type: 'refinement:new'; data: RefinementCompleteEvent }
   | { type: 'verification:new'; data: VerificationEvent }
+  | { type: 'tool-decision:new'; data: ToolDecision }
   | { type: 'refinement:input'; data: StreamInput }
   | { type: 'refinement:complete'; data: StreamComplete }
   | { type: 'refinement:stream-start'; data: StreamStart }
@@ -169,6 +171,7 @@ function connect() {
   listen('refinement:input');
   listen('refinement:complete');
   listen('verification:new');
+  listen('tool-decision:new');
   listen('refinement:stream-start');
   listen('refinement:streaming');
   listen('refinement:stream-end');
