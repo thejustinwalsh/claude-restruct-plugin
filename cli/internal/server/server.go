@@ -69,6 +69,7 @@ func New(database *db.DB, port string, devMode bool, webFS fs.FS, version string
 		r.Get("/sessions/{id}", s.handleGetSession)
 		r.Get("/sessions/{id}/refinements", s.handleSessionRefinements)
 		r.Get("/sessions/{id}/tool-decisions", s.handleSessionToolDecisions)
+		r.Get("/sessions/{id}/verifications", s.handleSessionVerifications)
 		r.Get("/sessions/{id}/timeline", s.handleSessionTimeline)
 		r.Get("/sessions/{id}/stats", s.handleSessionStats)
 
@@ -91,6 +92,7 @@ func New(database *db.DB, port string, devMode bool, webFS fs.FS, version string
 		r.Post("/stream/error", s.handleStreamError)
 
 		r.Post("/verification", s.handleVerificationEvent)
+		r.Post("/tool-decision", s.handleToolDecisionEvent)
 	})
 
 	// Serve embedded SPA in production (non-dev mode)

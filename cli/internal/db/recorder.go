@@ -162,24 +162,50 @@ func (r *Recorder) EndSession(sessionID string) {
 	}
 }
 
-// RecordToolDecision records a PreToolUse permission decision.
+// RecordToolDecision records a PreToolUse permission decision and broadcasts it.
 func (r *Recorder) RecordToolDecision(td *ToolDecision) int64 {
 	id, err := r.db.InsertToolDecision(td)
 	if err != nil {
 		slog.Warn("failed to record tool decision", "error", err)
 		return 0
 	}
+	td.ID = id
+	r.broadcastToolDecision(td)
 	return id
 }
 
-// UpdateToolOutcome updates a pending tool decision with the execution outcome.
+// UpdateToolOutcome updates a pending tool decision with the execution outcome and broadcasts it.
 func (r *Recorder) UpdateToolOutcome(toolUseID, outcome string, durationMs *int64) {
 	if toolUseID == "" {
 		return
 	}
 	if err := r.db.UpdateToolOutcome(toolUseID, outcome, durationMs); err != nil {
 		slog.Warn("failed to update tool outcome", "error", err, "tool_use_id", toolUseID)
+		return
 	}
+	td, err := r.db.GetToolDecisionByUseID(toolUseID)
+	if err == nil && td != nil {
+		r.broadcastToolDecision(td)
+	}
+}
+
+// broadcastToolDecision POSTs a tool decision to the server for SSE delivery.
+// Best-effort: failures are logged, never block the caller.
+func (r *Recorder) broadcastToolDecision(td *ToolDecision) {
+	if r.serverURL == "" {
+		return
+	}
+	data, err := json.Marshal(td)
+	if err != nil {
+		return
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Post(r.serverURL+"/api/tool-decision", "application/json", bytes.NewReader(data))
+	if err != nil {
+		slog.Debug("broadcast tool decision: post error", "error", err)
+		return
+	}
+	resp.Body.Close()
 }
 
 // broadcastVerification POSTs a verification event to the server for SSE delivery.

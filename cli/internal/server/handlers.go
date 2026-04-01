@@ -356,6 +356,26 @@ func (s *Server) handleSessionToolDecisions(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, decisions)
 }
 
+func (s *Server) handleSessionVerifications(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+
+	events, err := s.db.GetVerificationEventsForSession(id, limit, offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if events == nil {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+	writeJSON(w, http.StatusOK, events)
+}
+
 func (s *Server) handleSessionTimeline(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -383,5 +403,15 @@ func (s *Server) handleVerificationEvent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.hub.Broadcast(sse.Event{Type: "verification:new", Data: payload})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleToolDecisionEvent(w http.ResponseWriter, r *http.Request) {
+	var payload db.ToolDecision
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	s.hub.Broadcast(sse.Event{Type: "tool-decision:new", Data: payload})
 	w.WriteHeader(http.StatusNoContent)
 }

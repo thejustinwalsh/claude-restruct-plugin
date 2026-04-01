@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -59,6 +61,14 @@ Used as a hook handler for TaskCompleted and Stop events.`,
 			return nil
 		}
 		slog.Debug("verify: parsed input", "hook_event", input.HookEventName, "session_id", input.SessionID, "task_id", input.TaskID, "stop_hook_active", input.StopHookActive)
+
+		// Ignore SIGTERM for Stop hooks only — Claude Code may try to kill
+		// the hook early, but verifications must run to completion.
+		// We still respect the hook timeout (SIGKILL after 120s).
+		if input.HookEventName == "Stop" {
+			signal.Ignore(syscall.SIGTERM, syscall.SIGINT)
+			slog.Debug("verify: Stop hook — ignoring SIGTERM")
+		}
 
 		cwd := input.Cwd
 		if cwd == "" {

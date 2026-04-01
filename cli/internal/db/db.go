@@ -687,6 +687,29 @@ func (d *DB) LatestRefinementID(sessionID string) int64 {
 	return id
 }
 
+// GetVerificationEventsForSession returns all verification events for a session.
+func (d *DB) GetVerificationEventsForSession(sessionID string, limit, offset int) ([]VerificationEvent, error) {
+	rows, err := d.pool.Query(`
+		SELECT id, session_id, refinement_id, scope, hook_event, event_type, file_count, duration_us, cwd_input, project_dir, changed_files, checks_run, result, created_at
+		FROM verification_events WHERE session_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`, sessionID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []VerificationEvent
+	for rows.Next() {
+		var e VerificationEvent
+		if err := rows.Scan(&e.ID, &e.SessionID, &e.RefinementID, &e.Scope, &e.HookEvent, &e.EventType,
+			&e.FileCount, &e.DurationUs, &e.CwdInput, &e.ProjectDir,
+			&e.ChangedFiles, &e.ChecksRun, &e.Result, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
 // GetVerificationEventsForRefinement returns verification events linked to
 // a specific refinement. This scopes events to the prompt cycle that
 // produced this refinement (UserPromptSubmit → Stop).
@@ -769,6 +792,24 @@ func (d *DB) UpdateToolOutcome(toolUseID, outcome string, durationMs *int64) err
 		outcome, durationMs, toolUseID,
 	)
 	return err
+}
+
+// GetToolDecisionByUseID returns a single tool decision by its tool_use_id.
+func (d *DB) GetToolDecisionByUseID(toolUseID string) (*ToolDecision, error) {
+	var td ToolDecision
+	err := d.pool.QueryRow(`
+		SELECT id, session_id, project_path, tool_name, tool_input_summary, tool_use_id,
+		       hook_decision, hook_tier, hook_reason, hook_duration_us,
+		       outcome, tool_duration_ms, reviewed, reviewed_at, created_at
+		FROM tool_decisions WHERE tool_use_id = ?`, toolUseID,
+	).Scan(&td.ID, &td.SessionID, &td.ProjectPath, &td.ToolName, &td.ToolInputSummary, &td.ToolUseID,
+		&td.HookDecision, &td.HookTier, &td.HookReason, &td.HookDurationUs,
+		&td.Outcome, &td.ToolDurationMs, &td.Reviewed, &td.ReviewedAt, &td.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &td, nil
 }
 
 // GetUnreviewedDecisions returns tool decisions for a project that haven't been reviewed,
@@ -998,6 +1039,8 @@ func (d *DB) GetTimelineEvents(sessionID string, limit, offset int) ([]TimelineE
 					'event_type', event_type,
 					'file_count', file_count,
 					'duration_us', duration_us,
+					'changed_files', changed_files,
+					'checks_run', checks_run,
 					'result', result,
 					'created_at', created_at
 				) AS payload
