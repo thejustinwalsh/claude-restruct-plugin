@@ -5,8 +5,10 @@
   "scripts": {
     "build": "xmake build -g release",
     "release": "xmake f -m release && xmake build -g release",
-    "dev": "xmake f -m debug > /dev/null 2>&1 && xmake build cli && pnpm -r --parallel run dev",
+    "dev": "xmake f -m debug > /dev/null 2>&1 && rm -f .xmake/cli.d && pnpm -r --parallel run dev",
     "test": "pnpm -r run test",
+    "lint": "pnpm -r run lint",
+    "lint:fix": "pnpm -r run lint:fix",
     "clean": "xmake clean",
     "postinstall": "lefthook install"
   },

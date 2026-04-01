@@ -1,17 +1,31 @@
 checks:
-  - name: test
-    command: "pnpm test"
-
-  - name: build
-    command: "pnpm build"
-
   - name: typecheck
     command: "pnpm --filter web exec tsc --noEmit"
     globs:
       - "web/**/*.ts"
       - "web/**/*.tsx"
 
-  - name: go-vet
-    command: "pnpm --filter @restruct/cli exec go vet ./..."
+  - name: lint
+    command: "pnpm --filter cli lint"
     globs:
+      - "cli/**/*.go"
+
+  - name: lint-fix
+    command: "pnpm --filter web lint:fix"
+    globs:
+      - "web/**/*.ts"
+      - "web/**/*.tsx"
+
+  - name: test
+    command: "pnpm test"
+    globs:
+      - "web/**/*.ts"
+      - "web/**/*.tsx"
+      - "cli/**/*.go"
+
+  - name: build
+    command: "pnpm build"
+    globs:
+      - "web/**/*.ts"
+      - "web/**/*.tsx"
       - "cli/**/*.go"
