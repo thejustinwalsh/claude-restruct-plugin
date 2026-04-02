@@ -9,6 +9,8 @@ import type {
   TimelineEventRaw,
   VerificationEvent,
   CheckRun,
+  BootstrapEvent,
+  ContextSelection,
 } from '@/api/client';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -584,6 +586,188 @@ const VF_RESULT_OPTIONS = [
 ];
 
 // ---------------------------------------------------------------------------
+// Context tab — bootstrap events + context selections
+// ---------------------------------------------------------------------------
+
+// Unified row type for the context tab
+interface ContextRow {
+  id: string;
+  type: 'bootstrap' | 'selection';
+  timestamp: string;
+  data: BootstrapEvent | ContextSelection;
+}
+
+function buildContextRows(
+  bootstraps: BootstrapEvent[],
+  selections: ContextSelection[],
+): ContextRow[] {
+  const rows: ContextRow[] = [];
+  for (const b of bootstraps) {
+    rows.push({
+      id: `b-${b.id}`,
+      type: 'bootstrap',
+      timestamp: b.created_at,
+      data: b,
+    });
+  }
+  for (const s of selections) {
+    rows.push({
+      id: `s-${s.id}`,
+      type: 'selection',
+      timestamp: s.created_at,
+      data: s,
+    });
+  }
+  rows.sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+  );
+  return rows;
+}
+
+const CX_COL = {
+  time: 'w-[120px] shrink-0',
+  type: 'w-[88px] shrink-0 text-center',
+  status: 'w-[80px] shrink-0 text-center',
+  files: 'w-[52px] shrink-0 text-center',
+  rules: 'w-[52px] shrink-0 text-center',
+  latency: 'w-[80px] shrink-0',
+  detail: 'min-w-0 flex-1',
+};
+
+function ContextHeader() {
+  return (
+    <div className={HEADER_ROW}>
+      <span className={CX_COL.time}>Time</span>
+      <span className={CX_COL.type}>Event</span>
+      <span className={CX_COL.status}>Status</span>
+      <span className={CX_COL.files}>Files</span>
+      <span className={CX_COL.rules}>Rules</span>
+      <span className={CX_COL.latency}>Duration</span>
+      <span className={CX_COL.detail}>Detail</span>
+    </div>
+  );
+}
+
+function ContextRow({ row }: { row: ContextRow }) {
+  if (row.type === 'bootstrap') {
+    const b = row.data as BootstrapEvent;
+    return (
+      <div className={DATA_ROW}>
+        <span
+          className={`${CX_COL.time} text-muted-foreground font-mono text-xs`}
+        >
+          <FormattedTime iso={b.created_at} />
+        </span>
+        <span className={CX_COL.type}>
+          <Badge variant="secondary" className="text-[10px]">
+            bootstrap
+          </Badge>
+        </span>
+        <span className={CX_COL.status}>
+          <Badge
+            variant={
+              b.classify_status === 'complete'
+                ? 'default'
+                : b.classify_status === 'failed'
+                  ? 'destructive'
+                  : 'outline'
+            }
+            className="text-[10px]"
+          >
+            {b.classify_status}
+          </Badge>
+        </span>
+        <span className={`${CX_COL.files} text-xs tabular-nums`}>
+          {b.files_processed}
+        </span>
+        <span className={`${CX_COL.rules} text-xs tabular-nums`}>
+          {b.total_rules}
+        </span>
+        <span
+          className={`${CX_COL.latency} text-muted-foreground font-mono text-xs`}
+        >
+          {formatMicros(b.duration_us)}
+          {b.classify_duration_us != null && b.classify_duration_us > 0 && (
+            <span className="text-muted-foreground/60">
+              {' '}
+              + {formatMicros(b.classify_duration_us)}
+            </span>
+          )}
+        </span>
+        <span
+          className={`${CX_COL.detail} text-muted-foreground truncate text-xs`}
+        >
+          {b.error_message ||
+            `${b.files_discovered} discovered, ${b.files_processed} processed`}
+        </span>
+      </div>
+    );
+  }
+
+  const s = row.data as ContextSelection;
+  return (
+    <div className={DATA_ROW}>
+      <span
+        className={`${CX_COL.time} text-muted-foreground font-mono text-xs`}
+      >
+        <FormattedTime iso={s.created_at} />
+      </span>
+      <span className={CX_COL.type}>
+        <Badge variant="default" className="text-[10px]">
+          selection
+        </Badge>
+      </span>
+      <span className={CX_COL.status}>{'\u2014'}</span>
+      <span className={CX_COL.files}>{'\u2014'}</span>
+      <span className={`${CX_COL.rules} text-xs tabular-nums`}>
+        {s.rules_selected > 0 ? s.rules_selected : '\u2014'}
+      </span>
+      <span className={CX_COL.latency}>{'\u2014'}</span>
+      <span className={`${CX_COL.detail} truncate font-mono text-xs`}>
+        {s.doc_source}
+        <span className="text-muted-foreground ml-2 font-sans">
+          refinement #{s.refinement_id}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+function ContextStats({
+  bootstraps,
+  selections,
+}: {
+  bootstraps: BootstrapEvent[];
+  selections: ContextSelection[];
+}) {
+  const classified = bootstraps.filter(
+    (b) => b.classify_status === 'complete',
+  ).length;
+  const failed = bootstraps.filter(
+    (b) => b.classify_status === 'failed',
+  ).length;
+  const uniqueDocs = new Set(selections.map((s) => s.doc_source)).size;
+
+  return (
+    <div className="flex flex-wrap items-center gap-4">
+      <Stat label="bootstraps" value={bootstraps.length} />
+      <Stat label="classified" value={classified} />
+      <Stat label="failed" value={failed} warn={failed > 0} />
+      <Stat label="selections" value={selections.length} />
+      <Stat label="unique docs" value={uniqueDocs} />
+    </div>
+  );
+}
+
+type ContextTypeFilter = 'all' | 'bootstrap' | 'selection';
+
+const CX_TYPE_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'bootstrap', label: 'Bootstrap' },
+  { value: 'selection', label: 'Selections' },
+];
+
+// ---------------------------------------------------------------------------
 // Main History page
 // ---------------------------------------------------------------------------
 
@@ -591,8 +775,13 @@ const VF_RESULT_OPTIONS = [
 // Filter state — useReducer + URL sync
 // ---------------------------------------------------------------------------
 
-type TabValue = 'timeline' | 'tool_decisions' | 'verifications';
-const VALID_TABS: TabValue[] = ['timeline', 'tool_decisions', 'verifications'];
+type TabValue = 'timeline' | 'tool_decisions' | 'verifications' | 'context';
+const VALID_TABS: TabValue[] = [
+  'timeline',
+  'tool_decisions',
+  'verifications',
+  'context',
+];
 
 interface FilterState {
   session: string;
@@ -602,6 +791,7 @@ interface FilterState {
   toolName: string;
   vfType: VerificationTypeFilter;
   vfResult: VerificationResultFilter;
+  cxType: ContextTypeFilter;
   search: string;
 }
 
@@ -620,6 +810,7 @@ const PARAM_KEYS: Record<keyof FilterState, string> = {
   toolName: 'tool',
   vfType: 'vfType',
   vfResult: 'vfResult',
+  cxType: 'cxType',
   search: 'q',
 };
 
@@ -635,6 +826,7 @@ function readFiltersFromURL(selectedSessionId?: string): FilterState {
     toolName: p.get('tool') || 'all',
     vfType: (p.get('vfType') || 'all') as VerificationTypeFilter,
     vfResult: (p.get('vfResult') || 'all') as VerificationResultFilter,
+    cxType: (p.get('cxType') || 'all') as ContextTypeFilter,
     search: p.get('q') || '',
   };
 }
@@ -719,15 +911,31 @@ export function History({ selectedSessionId }: { selectedSessionId?: string }) {
     (v: string) => dispatch({ vfResult: v as VerificationResultFilter }),
     [],
   );
+  const setCxType = useCallback(
+    (v: string) => dispatch({ cxType: v as ContextTypeFilter }),
+    [],
+  );
   const setSearch = useCallback((v: string) => dispatch({ search: v }), []);
 
-  const { tab, eventType, decision, toolName, vfType, vfResult, search } =
-    filters;
+  const {
+    tab,
+    eventType,
+    decision,
+    toolName,
+    vfType,
+    vfResult,
+    cxType,
+    search,
+  } = filters;
 
   // Data
   const [toolDecisions, setToolDecisions] = useState<ToolDecision[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [verifications, setVerifications] = useState<VerificationEvent[]>([]);
+  const [bootstrapEvents, setBootstrapEvents] = useState<BootstrapEvent[]>([]);
+  const [contextSelections, setContextSelections] = useState<
+    ContextSelection[]
+  >([]);
   const [loading, setLoading] = useState(true);
 
   const fetchDecisions = useCallback(async () => {
@@ -760,6 +968,21 @@ export function History({ selectedSessionId }: { selectedSessionId?: string }) {
     }
   }, [sessionId]);
 
+  const fetchContext = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const [bEvents, cSels] = await Promise.all([
+        api.sessionBootstrapEvents(sessionId),
+        api.sessionContextSelections(sessionId),
+      ]);
+      setBootstrapEvents(bEvents);
+      setContextSelections(cSels);
+    } catch {
+      setBootstrapEvents([]);
+      setContextSelections([]);
+    }
+  }, [sessionId]);
+
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -767,6 +990,7 @@ export function History({ selectedSessionId }: { selectedSessionId?: string }) {
         fetchDecisions(),
         fetchTimeline(),
         fetchVerifications(),
+        fetchContext(),
       ]);
       if (!cancelled) setLoading(false);
     };
@@ -774,7 +998,7 @@ export function History({ selectedSessionId }: { selectedSessionId?: string }) {
     return () => {
       cancelled = true;
     };
-  }, [fetchDecisions, fetchTimeline, fetchVerifications]);
+  }, [fetchDecisions, fetchTimeline, fetchVerifications, fetchContext]);
 
   // SSE: append new events in real-time
   useSSE((evt) => {
@@ -825,6 +1049,19 @@ export function History({ selectedSessionId }: { selectedSessionId?: string }) {
       };
       const [parsed] = parseTimelineEvents([raw]);
       setTimeline((prev) => [parsed, ...prev]);
+    }
+    if (evt.type === 'bootstrap:new' || evt.type === 'bootstrap:classify') {
+      const b = evt.data;
+      if (b.session_id !== sessionId) return;
+      setBootstrapEvents((prev) => {
+        const idx = prev.findIndex((e) => e.id === b.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = b;
+          return next;
+        }
+        return [b, ...prev];
+      });
     }
   });
 
@@ -878,6 +1115,32 @@ export function History({ selectedSessionId }: { selectedSessionId?: string }) {
       return true;
     });
   }, [verifications, vfType, vfResult, search]);
+
+  // Context rows (bootstrap + selections merged)
+  const contextRows = useMemo(() => {
+    return buildContextRows(bootstrapEvents, contextSelections);
+  }, [bootstrapEvents, contextSelections]);
+
+  const filteredContextRows = useMemo(() => {
+    return contextRows.filter((r) => {
+      if (cxType !== 'all' && r.type !== cxType) return false;
+      if (search) {
+        const s = search.toLowerCase();
+        if (r.type === 'bootstrap') {
+          const b = r.data as BootstrapEvent;
+          if (
+            !b.error_message?.toLowerCase().includes(s) &&
+            !b.classify_status.toLowerCase().includes(s)
+          )
+            return false;
+        } else {
+          const sel = r.data as ContextSelection;
+          if (!sel.doc_source.toLowerCase().includes(s)) return false;
+        }
+      }
+      return true;
+    });
+  }, [contextRows, cxType, search]);
 
   /*
    * Table height strategy: flex chain fills available space.
@@ -966,6 +1229,17 @@ export function History({ selectedSessionId }: { selectedSessionId?: string }) {
                 }}
               >
                 {filteredVerifications.length}
+              </span>
+            </TabsTrigger>
+            <TabsTrigger value="context">
+              Context
+              <span
+                className="text-muted-foreground ml-1 inline-block text-right text-xs tabular-nums"
+                style={{
+                  minWidth: `${String(contextRows.length).length || 1}ch`,
+                }}
+              >
+                {filteredContextRows.length}
               </span>
             </TabsTrigger>
           </TabsList>
@@ -1140,6 +1414,54 @@ export function History({ selectedSessionId }: { selectedSessionId?: string }) {
                     data={filteredVerifications}
                     keyExtractor={(item) => String(item.id)}
                     renderItem={({ item }) => <VerificationRow v={item} />}
+                    estimatedItemSize={ROW_HEIGHT}
+                    recycleItems
+                    style={{ height: '100%' }}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* Context tab */}
+        <TabsContent value="context" className="flex min-h-0 flex-1 flex-col">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 py-2">
+            <div className="flex items-center gap-2">
+              <FilterChips
+                value={cxType}
+                onChange={setCxType}
+                options={CX_TYPE_OPTIONS}
+              />
+            </div>
+            <ContextStats
+              bootstraps={bootstrapEvents}
+              selections={contextSelections}
+            />
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border">
+              <ContextHeader />
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {loading ? (
+                  <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2">
+                    <ListIcon className="text-border size-8" />
+                    <span className="text-xs">Loading...</span>
+                  </div>
+                ) : filteredContextRows.length === 0 ? (
+                  <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2">
+                    <SearchXIcon className="text-border size-8" />
+                    <span className="text-xs">
+                      No context events match the current filters
+                    </span>
+                  </div>
+                ) : (
+                  <LegendList
+                    data={filteredContextRows}
+                    keyExtractor={(item) => item.id}
+                    renderItem={({ item }) => <ContextRow row={item} />}
+                    getItemType={(item) => item.type}
                     estimatedItemSize={ROW_HEIGHT}
                     recycleItems
                     style={{ height: '100%' }}

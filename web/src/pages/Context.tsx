@@ -3,7 +3,6 @@ import { useSessions, useBootstrapEvent, useActions } from '@/store';
 import { api } from '@/api/client';
 import type { BootstrapEvent } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -13,8 +12,6 @@ import {
 } from '@/components/ui/select';
 import {
   DatabaseIcon,
-  FileTextIcon,
-  TagIcon,
   CheckCircleIcon,
   AlertCircleIcon,
   LoaderIcon,
@@ -141,61 +138,6 @@ function BootstrapStatus({ event }: { event: BootstrapEvent }) {
 // ---------------------------------------------------------------------------
 // Document browser
 // ---------------------------------------------------------------------------
-
-interface DocEntry {
-  source: string;
-  hash: string;
-  keywords: string[];
-  categories: string[];
-  summary: string;
-  rule_count: number;
-}
-
-function DocumentRow({ doc }: { doc: DocEntry }) {
-  return (
-    <div className="flex items-start gap-3 border-b px-3 py-2.5">
-      <FileTextIcon className="text-muted-foreground mt-0.5 size-4 shrink-0" />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2">
-          <span className="truncate font-mono text-sm font-medium">
-            {doc.source}
-          </span>
-          <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
-            {doc.rule_count} rules
-          </span>
-        </div>
-        <p className="text-muted-foreground mt-0.5 text-xs">{doc.summary}</p>
-        <div className="mt-1.5 flex flex-wrap gap-1">
-          {doc.categories.map((cat) => (
-            <Badge key={cat} variant="secondary" className="text-[10px]">
-              {cat}
-            </Badge>
-          ))}
-        </div>
-        {doc.keywords.length > 0 && (
-          <div className="mt-1 flex flex-wrap gap-1">
-            {doc.keywords.slice(0, 10).map((kw) => (
-              <span
-                key={kw}
-                className="text-muted-foreground inline-flex items-center gap-0.5 text-[10px]"
-              >
-                <TagIcon className="size-2.5" />
-                {kw}
-              </span>
-            ))}
-            {doc.keywords.length > 10 && (
-              <span className="text-muted-foreground text-[10px]">
-                +{doc.keywords.length - 10} more
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Recent selections
 // ---------------------------------------------------------------------------
 
@@ -258,7 +200,6 @@ export function Context({ selectedSessionId }: { selectedSessionId?: string }) {
   // Bootstrap data
   const liveBootstrap = useBootstrapEvent(sessionId);
   const [bootstrap, setBootstrap] = useState<BootstrapEvent | null>(null);
-  const [docs] = useState<DocEntry[]>([]);
   const [selections, setSelections] = useState<SelectionEntry[]>([]);
 
   useEffect(() => {
@@ -271,40 +212,22 @@ export function Context({ selectedSessionId }: { selectedSessionId?: string }) {
   // Use live SSE data if available, fall back to fetched data
   const displayBootstrap = liveBootstrap || bootstrap;
 
-  // Load index.json docs (fetched from the bootstrap event's project map)
-  useEffect(() => {
-    if (!displayBootstrap) return;
-    // The bootstrap event tells us files_discovered/processed but doesn't carry the full doc list.
-    // We'd need a dedicated endpoint for the full index. For now, use the event data.
-    // TODO: Add GET /api/bootstrap/documents endpoint for full doc list
-  }, [displayBootstrap]);
-
-  // Load recent context selections for this session's refinements
+  // Load context selections via the session-level endpoint (single request)
   useEffect(() => {
     if (!sessionId) return;
-    // Fetch refinements for this session, then their context selections
-    api.sessionRefinements(sessionId).then(async (refs) => {
-      const allSelections: SelectionEntry[] = [];
-      for (const ref of refs.slice(0, 20)) {
-        try {
-          const sels = await api.refinementContextSelections(ref.id);
-          for (const s of sels) {
-            allSelections.push({
-              refinement_id: s.refinement_id,
-              doc_source: s.doc_source,
-              created_at: s.created_at,
-            });
-          }
-        } catch {
-          // skip
-        }
-      }
-      setSelections(allSelections);
-    });
+    api
+      .sessionContextSelections(sessionId)
+      .then((sels) => {
+        setSelections(
+          sels.map((s) => ({
+            refinement_id: s.refinement_id,
+            doc_source: s.doc_source,
+            created_at: s.created_at,
+          })),
+        );
+      })
+      .catch(() => setSelections([]));
   }, [sessionId]);
-
-  // Doc list: Phase 5 will add a GET /api/bootstrap/documents endpoint.
-  // For now, docs remains empty — the bootstrap status card shows the counts.
 
   return (
     <div className="flex flex-col gap-4">
@@ -362,22 +285,13 @@ export function Context({ selectedSessionId }: { selectedSessionId?: string }) {
         </Card>
       )}
 
-      {/* Document browser */}
+      {/* Document browser — placeholder until GET /api/bootstrap/documents endpoint */}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">
-            Rule Documents
-            {docs.length > 0 && (
-              <span className="text-muted-foreground ml-1 font-normal">
-                ({docs.length})
-              </span>
-            )}
-          </CardTitle>
+          <CardTitle className="text-sm font-medium">Rule Documents</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {docs.length > 0 ? (
-            docs.map((doc) => <DocumentRow key={doc.hash} doc={doc} />)
-          ) : displayBootstrap ? (
+          {displayBootstrap ? (
             <div className="text-muted-foreground px-3 py-4 text-center text-xs">
               <p>{displayBootstrap.files_processed} documents indexed.</p>
               <p className="mt-1">

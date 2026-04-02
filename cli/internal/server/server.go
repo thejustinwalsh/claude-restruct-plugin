@@ -73,6 +73,8 @@ func New(database *db.DB, port string, devMode bool, webFS fs.FS, version string
 		r.Get("/sessions/{id}/timeline", s.handleSessionTimeline)
 		r.Get("/sessions/{id}/stats", s.handleSessionStats)
 		r.Get("/sessions/{id}/bootstrap", s.handleSessionBootstrap)
+		r.Get("/sessions/{id}/bootstrap/events", s.handleSessionBootstrapEvents)
+		r.Get("/sessions/{id}/context-selections", s.handleSessionContextSelections)
 
 		r.Get("/tool-decisions", s.handleListToolDecisions)
 		r.Get("/tool-decisions/stats", s.handleToolDecisionStats)

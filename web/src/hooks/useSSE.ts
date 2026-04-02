@@ -65,6 +65,8 @@ export type SSEEvent =
   | { type: 'refinement:streaming'; data: StreamToken }
   | { type: 'refinement:stream-end'; data: StreamEnd }
   | { type: 'refinement:stream-error'; data: StreamError }
+  | { type: 'bootstrap:new'; data: import('@/api/client').BootstrapEvent }
+  | { type: 'bootstrap:classify'; data: import('@/api/client').BootstrapEvent }
   | { type: 'connected'; data: { clients: number } };
 
 // ---------------------------------------------------------------------------
@@ -176,6 +178,8 @@ function connect() {
   listen('refinement:streaming');
   listen('refinement:stream-end');
   listen('refinement:stream-error');
+  listen('bootstrap:new');
+  listen('bootstrap:classify');
 
   es.onerror = () => {
     setConnected(false);

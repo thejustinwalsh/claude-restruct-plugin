@@ -14,29 +14,31 @@ func needsImplementationGuardrails(requestType string) bool {
 }
 
 // composeContext assembles the final XML context block from the LLM's
-// classification and statically available data. Inline XML comments
-// annotate each section so Claude understands how to use them.
+// classification and statically available data.
+//
+// Section order is designed for Claude's attention patterns:
+//
+//	rules/constraints/anti-patterns first (structural, follow these)
+//	protocol/workflow middle (process guidance)
+//	repo_state/analysis/intent last (highest attention = clearest signal)
+//
 // scopedRules is optional — when provided (from deep-context doc selection),
 // rules are sourced from specific documents with source attribution.
-func composeContext(c *LLMClassification, rules *prompt.ParsedRules, scopedRules map[string]*prompt.ParsedRules, gitBranch string) string {
+// rawPrompt is the developer's original, unmodified prompt text.
+func composeContext(c *LLMClassification, rules *prompt.ParsedRules, scopedRules map[string]*prompt.ParsedRules, gitBranch, rawPrompt string) string {
 	var sb strings.Builder
 	implGuards := needsImplementationGuardrails(c.Type)
 
 	fmt.Fprintf(&sb, "<context type=%q>\n", c.Type)
 	sb.WriteString("<!-- type: classifies this request and determines which guardrails are active -->\n")
 
-	// Intent — always included
-	sb.WriteString("\n<intent>\n")
-	sb.WriteString("<!-- Precise interpretation of the request. Verify it matches what the user meant. -->\n")
-	sb.WriteString(c.Intent)
-	sb.WriteString("\n</intent>\n")
+	// === RULES BLOCK (highest structural importance — top position) ===
 
 	// Applicable rules — LLM-selected, ranked by relevance, capped.
 	// When scoped rules are available (from deep-context doc selection),
 	// use them with source attribution. Otherwise fall back to flat rules.
 	const maxRules = 3
 	if len(scopedRules) > 0 {
-		// Collect rules from scoped documents with source attribution
 		var scopedEntries []string
 		for source, pr := range scopedRules {
 			for _, r := range pr.ContextRules {
@@ -71,40 +73,7 @@ func composeContext(c *LLMClassification, rules *prompt.ParsedRules, scopedRules
 		}
 	}
 
-	// Protocol — universal reasoning directives, always injected
-	sb.WriteString("\n<protocol>\n")
-	sb.WriteString("<!-- How to approach this task. Follow this before acting. -->\n")
-	sb.WriteString("- Plan first. Even simple requests benefit from a plan before determining the solution.\n")
-	sb.WriteString("- Explore options. When multiple approaches exist, sketch a few, weigh tradeoffs, and select the best before implementing. Planning is cheap.\n")
-	sb.WriteString("- Use agents to research. When you need a summary of a system, feature, or resource, delegate to a sub-agent instead of inline searching.\n")
-	sb.WriteString("- Use agents to parallelize. When work can be done concurrently, spawn agents rather than working sequentially.\n")
-	sb.WriteString("- Ask when uncertain. If the request is ambiguous or you're unsure about the approach, ask the user for clarity before proceeding.\n")
-	sb.WriteString("- Verify before assuming. Check the current state of code, config, and dependencies rather than guessing from memory.\n")
-	sb.WriteString("</protocol>\n")
-
-	// Workflow — process steps, always injected for code changes.
-	// Merge workflow rules from scoped documents when available.
-	if implGuards {
-		var workflowRules []string
-		if len(scopedRules) > 0 {
-			for _, pr := range scopedRules {
-				workflowRules = append(workflowRules, pr.WorkflowRules...)
-			}
-		}
-		if len(workflowRules) == 0 {
-			workflowRules = rules.WorkflowRules
-		}
-		if len(workflowRules) > 0 {
-			sb.WriteString("\n<workflow>\n")
-			sb.WriteString("<!-- Process steps to follow for this change. -->\n")
-			for _, r := range workflowRules {
-				fmt.Fprintf(&sb, "- %s\n", r)
-			}
-			sb.WriteString("</workflow>\n")
-		}
-	}
-
-	// Constraints — LLM-selected or scoped, capped
+	// Constraints — design/architectural, LLM-selected or scoped
 	const maxConstraints = 3
 	if len(scopedRules) > 0 {
 		var scopedConstraints []string
@@ -139,26 +108,6 @@ func composeContext(c *LLMClassification, rules *prompt.ParsedRules, scopedRules
 			}
 			sb.WriteString("</constraints>\n")
 		}
-	}
-
-	// Analysis — from LLM
-	if len(c.Analysis) > 0 {
-		sb.WriteString("\n<analysis>\n")
-		sb.WriteString("<!-- Non-obvious factors to reason about before committing to an approach. -->\n")
-		for _, a := range c.Analysis {
-			fmt.Fprintf(&sb, "- %s\n", a)
-		}
-		sb.WriteString("</analysis>\n")
-	}
-
-	// Clarification — only when genuinely ambiguous
-	if len(c.Clarification) > 0 {
-		sb.WriteString("\n<clarification_needed>\n")
-		sb.WriteString("<!-- STOP. Ask these questions before proceeding. Do NOT guess. -->\n")
-		for _, q := range c.Clarification {
-			fmt.Fprintf(&sb, "- %s\n", q)
-		}
-		sb.WriteString("</clarification_needed>\n")
 	}
 
 	// Anti-patterns — available for ALL types, ranked, capped
@@ -198,6 +147,42 @@ func composeContext(c *LLMClassification, rules *prompt.ParsedRules, scopedRules
 		}
 	}
 
+	// === PROCESS BLOCK (middle — guidance on how to work) ===
+
+	// Protocol — universal reasoning directives, always injected
+	sb.WriteString("\n<protocol>\n")
+	sb.WriteString("<!-- How to approach this task. Follow this before acting. -->\n")
+	sb.WriteString("- Plan first. Even simple requests benefit from a plan before determining the solution.\n")
+	sb.WriteString("- Explore options. When multiple approaches exist, sketch a few, weigh tradeoffs, and select the best before implementing. Planning is cheap.\n")
+	sb.WriteString("- Use agents to research. When you need a summary of a system, feature, or resource, delegate to a sub-agent instead of inline searching.\n")
+	sb.WriteString("- Use agents to parallelize. When work can be done concurrently, spawn agents rather than working sequentially.\n")
+	sb.WriteString("- Ask when uncertain. If the request is ambiguous or you're unsure about the approach, ask the user for clarity before proceeding.\n")
+	sb.WriteString("- Verify before assuming. Check the current state of code, config, and dependencies rather than guessing from memory.\n")
+	sb.WriteString("</protocol>\n")
+
+	// Workflow — process steps, always injected for code changes
+	if implGuards {
+		var workflowRules []string
+		if len(scopedRules) > 0 {
+			for _, pr := range scopedRules {
+				workflowRules = append(workflowRules, pr.WorkflowRules...)
+			}
+		}
+		if len(workflowRules) == 0 {
+			workflowRules = rules.WorkflowRules
+		}
+		if len(workflowRules) > 0 {
+			sb.WriteString("\n<workflow>\n")
+			sb.WriteString("<!-- Process steps to follow for this change. -->\n")
+			for _, r := range workflowRules {
+				fmt.Fprintf(&sb, "- %s\n", r)
+			}
+			sb.WriteString("</workflow>\n")
+		}
+	}
+
+	// === CONTEXT BLOCK (end — highest attention for Claude) ===
+
 	// Repo state — branch + LLM-summarized recent activity
 	if gitBranch != "" || c.RecentActivity != "" {
 		sb.WriteString("\n<repo_state>\n")
@@ -213,6 +198,34 @@ func composeContext(c *LLMClassification, rules *prompt.ParsedRules, scopedRules
 		}
 		sb.WriteString("\n</repo_state>\n")
 	}
+
+	// Analysis — from LLM
+	if len(c.Analysis) > 0 {
+		sb.WriteString("\n<analysis>\n")
+		sb.WriteString("<!-- Non-obvious factors to reason about before committing to an approach. -->\n")
+		for _, a := range c.Analysis {
+			fmt.Fprintf(&sb, "- %s\n", a)
+		}
+		sb.WriteString("</analysis>\n")
+	}
+
+	// Clarification — only when genuinely ambiguous
+	if len(c.Clarification) > 0 {
+		sb.WriteString("\n<clarification_needed>\n")
+		sb.WriteString("<!-- STOP. Ask these questions before proceeding. Do NOT guess. -->\n")
+		for _, q := range c.Clarification {
+			fmt.Fprintf(&sb, "- %s\n", q)
+		}
+		sb.WriteString("</clarification_needed>\n")
+	}
+
+	// Intent — LAST position for maximum attention.
+	// Includes the developer's original prompt verbatim to prevent information
+	// loss, followed by the LLM's structured interpretation.
+	sb.WriteString("\n<intent>\n")
+	sb.WriteString("<!-- Precise interpretation of the request. Verify it matches what the user meant. -->\n")
+	sb.WriteString(c.Intent)
+	sb.WriteString("\n</intent>\n")
 
 	sb.WriteString("</context>")
 	return sb.String()

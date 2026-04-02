@@ -338,6 +338,10 @@ export const api = {
   // Bootstrap & context
   sessionBootstrap: (id: string) =>
     fetchJSON<BootstrapEvent | null>(`/sessions/${id}/bootstrap`),
+  sessionBootstrapEvents: (id: string) =>
+    fetchJSON<BootstrapEvent[]>(`/sessions/${id}/bootstrap/events`),
+  sessionContextSelections: (id: string) =>
+    fetchJSON<ContextSelection[]>(`/sessions/${id}/context-selections`),
   refinementContextSelections: (id: number) =>
     fetchJSON<ContextSelection[]>(`/refinements/${id}/context-selections`),
 

@@ -1145,10 +1145,65 @@ func (d *DB) GetBootstrapForSession(sessionID string) (*BootstrapEvent, error) {
 	).Scan(&e.ID, &e.SessionID, &e.ProjectPath, &e.FilesDiscovered, &e.FilesProcessed,
 		&e.TotalRules, &e.ClassifyStatus, &e.DurationUs, &e.ClassifyDurationUs,
 		&e.ErrorMessage, &e.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
 	return &e, nil
+}
+
+func (d *DB) GetBootstrapEventsForSession(sessionID string, limit int) ([]BootstrapEvent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := d.pool.Query(`
+		SELECT id, session_id, project_path, files_discovered, files_processed, total_rules,
+			classify_status, duration_us, classify_duration_us, error_message, created_at
+		FROM bootstrap_events WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`, sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []BootstrapEvent
+	for rows.Next() {
+		var e BootstrapEvent
+		if err := rows.Scan(&e.ID, &e.SessionID, &e.ProjectPath, &e.FilesDiscovered, &e.FilesProcessed,
+			&e.TotalRules, &e.ClassifyStatus, &e.DurationUs, &e.ClassifyDurationUs,
+			&e.ErrorMessage, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
+func (d *DB) GetContextSelectionsForSession(sessionID string, limit int) ([]ContextSelection, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := d.pool.Query(`
+		SELECT cs.id, cs.refinement_id, cs.doc_source, cs.doc_hash, cs.rules_selected, cs.created_at
+		FROM context_selections cs
+		JOIN refinements r ON r.id = cs.refinement_id
+		WHERE r.session_id = ?
+		ORDER BY cs.created_at DESC LIMIT ?`, sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sels []ContextSelection
+	for rows.Next() {
+		var s ContextSelection
+		if err := rows.Scan(&s.ID, &s.RefinementID, &s.DocSource, &s.DocHash, &s.RulesSelected, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		sels = append(sels, s)
+	}
+	return sels, rows.Err()
 }
 
 // --- Context selections ---

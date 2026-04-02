@@ -13,6 +13,7 @@ import (
 	"github.com/tjw/restruct/internal/config"
 	"github.com/tjw/restruct/internal/db"
 	"github.com/tjw/restruct/internal/hook"
+	"github.com/tjw/restruct/internal/ollama"
 	"github.com/tjw/restruct/internal/pipeline"
 	"github.com/tjw/restruct/internal/prompt"
 	"github.com/tjw/restruct/internal/session"
@@ -224,17 +225,11 @@ are appended as additional context that guides Claude's behavior.`,
 			}
 
 			// Record which deep-context documents were selected
-			if len(result.SelectedDocs) > 0 && len(result.DocSources) > 0 {
+			if len(result.DocSources) > 0 {
 				var selections []db.ContextSelection
-				for i, idx := range result.SelectedDocs {
-					source := ""
-					if i < len(result.DocSources) {
-						source = result.DocSources[i]
-					}
-					_ = idx
+				for _, source := range result.DocSources {
 					selections = append(selections, db.ContextSelection{
 						DocSource: source,
-						DocHash:   "", // hash would require re-loading map; source is sufficient
 					})
 				}
 				recorder.RecordContextSelections(refID, selections)
@@ -281,9 +276,19 @@ are appended as additional context that guides Claude's behavior.`,
 		// Frame the output for Claude or passthrough if no context needed
 		framed := prompt.FrameContext(result.Refined)
 		if framed == "" || result.NoContext {
-			return hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
+			hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
+		} else {
+			hook.WriteOutput(os.Stdout, hook.ContextOutput(framed))
 		}
-		return hook.WriteOutput(os.Stdout, hook.ContextOutput(framed))
+
+		// Deferred classification: after stdout is written (hook returned to Claude)
+		// and Ollama is free (refine just finished), classify if not yet done.
+		// This runs in-process — the hook process stays alive until it completes or times out.
+		if !bootstrap.IsClassified(linksDir) {
+			tryDeferredClassify(linksDir, cfg, recorder, sessionID)
+		}
+
+		return nil
 	},
 }
 
@@ -316,6 +321,79 @@ func takeSnapshotForRefinement(database *db.DB, recorder *db.Recorder, sessionID
 	recorder.RecordSnapshot(sessionID, refID, "prompt", "UserPromptSubmit", cwd, projectDir, fileCount, durationUs)
 
 	verify.PruneStaleSnapshots(database, 24*time.Hour)
+}
+
+// tryDeferredClassify runs LLM classification after the refine hook has returned.
+// Ollama is free at this point (refine just completed). This ensures classification
+// eventually completes even when bootstrap's async classify lost to Ollama contention.
+// Best-effort: failures are logged, never block the process exit.
+func tryDeferredClassify(linksDir string, cfg *config.Config, recorder *db.Recorder, sessionID string) {
+	pm, err := bootstrap.LoadMap(linksDir)
+	if err != nil || pm == nil || len(pm.Files) == 0 {
+		return
+	}
+
+	// Re-generate documents from source files (needed for classify)
+	var docs []*bootstrap.Document
+	for _, entry := range pm.Files {
+		info, err := os.Stat(entry.AbsPath)
+		if err != nil {
+			continue
+		}
+		doc, err := bootstrap.GenerateDocument(bootstrap.DiscoveredFile{
+			AbsPath: entry.AbsPath,
+			RelPath: entry.Source,
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+		})
+		if err != nil {
+			continue
+		}
+		docs = append(docs, doc)
+	}
+
+	if len(docs) == 0 {
+		return
+	}
+
+	client, err := ollama.NewClient(
+		cfg.Ollama.URL, cfg.Ollama.Model,
+		10*time.Second, 120*time.Second, 60*time.Second, cfg.Ollama.KeepAlive,
+	)
+	if err != nil {
+		slog.Debug("deferred classify: ollama client error", "error", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	if !client.IsAvailable(ctx) {
+		slog.Debug("deferred classify: ollama not available")
+		return
+	}
+
+	chatFn := bootstrap.ChatFunc(func(ctx context.Context, system, user string, temp float32, max int) (string, error) {
+		return client.Chat(ctx, system, user, temp, max)
+	})
+
+	slog.Info("deferred classify: starting after refine completed")
+	classifier := bootstrap.NewClassifier(chatFn, linksDir, float32(cfg.Refinement.Temperature), 512)
+	start := time.Now()
+	<-classifier.ClassifyAsync(ctx, docs)
+	durationUs := time.Since(start).Microseconds()
+
+	// Update the bootstrap event in DB if we have a recorder
+	if recorder != nil {
+		be, err := recorder.DB().GetBootstrapForSession(sessionID)
+		if err == nil && be != nil && be.ClassifyStatus == "pending" {
+			status := "failed"
+			if bootstrap.IsClassified(linksDir) {
+				status = "complete"
+			}
+			recorder.UpdateBootstrapClassify(be.ID, status, durationUs, nil)
+		}
+	}
 }
 
 func init() {

@@ -24,6 +24,11 @@ func NewRecorder(database *DB, serverURL string) *Recorder {
 	return &Recorder{db: database, serverURL: serverURL}
 }
 
+// DB returns the underlying database for direct queries.
+func (r *Recorder) DB() *DB {
+	return r.db
+}
+
 // RecordSession ensures a session record exists.
 // Uses purgatory session if sessionID is empty.
 func (r *Recorder) RecordSession(sessionID, projectPath, transcriptPath string) {

@@ -328,7 +328,7 @@ func (p *Pipeline) Refine(ctx context.Context, rawPrompt string, sink ollama.Tok
 	// 13. Compose final context XML from classification + static data + git
 	var composed string
 	timer("compose", func() {
-		composed = composeContext(classification, buildResult.Rules, scopedRules, gitCtx.Branch)
+		composed = composeContext(classification, buildResult.Rules, scopedRules, gitCtx.Branch, rawPrompt)
 	})
 
 	// 13. Cache result

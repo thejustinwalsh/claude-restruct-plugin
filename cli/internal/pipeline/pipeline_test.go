@@ -386,7 +386,7 @@ func TestComposeContext_CodeChange(t *testing.T) {
 		AntiPatterns: []string{"Do not hardcode tokens"},
 	}
 
-	result := composeContext(c, rules, nil, "main")
+	result := composeContext(c, rules, nil, "main", "")
 
 	if !strings.Contains(result, `type="code_change"`) {
 		t.Error("missing type attribute")
@@ -426,7 +426,7 @@ func TestComposeContext_Question(t *testing.T) {
 		AntiPatterns: []string{"Some anti-pattern"},
 	}
 
-	result := composeContext(c, rules, nil, "main")
+	result := composeContext(c, rules, nil, "main", "")
 
 	if !strings.Contains(result, `type="question"`) {
 		t.Error("missing type attribute")
@@ -460,7 +460,7 @@ func TestComposeContext_OutOfBoundsIndex(t *testing.T) {
 		ContextRules: []string{"Only one rule"},
 	}
 
-	result := composeContext(c, rules, nil, "main")
+	result := composeContext(c, rules, nil, "main", "")
 
 	if !strings.Contains(result, "Only one rule") {
 		t.Error("valid index should be included")
@@ -480,7 +480,7 @@ func TestComposeContext_WithWorkflow(t *testing.T) {
 		},
 	}
 
-	result := composeContext(c, rules, nil, "main")
+	result := composeContext(c, rules, nil, "main", "")
 
 	if !strings.Contains(result, "<workflow>") {
 		t.Error("code_change with WorkflowRules should include <workflow>")
@@ -507,7 +507,7 @@ func TestComposeContext_WithLLMSelectedConstraints(t *testing.T) {
 		},
 	}
 
-	result := composeContext(c, rules, nil, "main")
+	result := composeContext(c, rules, nil, "main", "")
 
 	if !strings.Contains(result, "<constraints>") {
 		t.Error("should include <constraints> when LLM selects them")
@@ -532,7 +532,7 @@ func TestComposeContext_NoWorkflowForQuestion(t *testing.T) {
 		WorkflowRules: []string{"Add tests for new behavior"},
 	}
 
-	result := composeContext(c, rules, nil, "main")
+	result := composeContext(c, rules, nil, "main", "")
 
 	if strings.Contains(result, "<workflow>") {
 		t.Error("question type should NOT include workflow")
@@ -561,7 +561,7 @@ func TestComposeContext_ScopedRules(t *testing.T) {
 		},
 	}
 
-	result := composeContext(c, rules, scopedRules, "main")
+	result := composeContext(c, rules, scopedRules, "main", "")
 
 	// Should contain scoped rules with source attribution
 	if !strings.Contains(result, "[web/CLAUDE.md]") {
@@ -603,7 +603,7 @@ func TestComposeContext_NilScopedRulesFallsBack(t *testing.T) {
 		AntiPatterns: []string{"flat anti"},
 	}
 
-	result := composeContext(c, rules, nil, "main")
+	result := composeContext(c, rules, nil, "main", "")
 
 	// With nil scoped rules, should fall back to flat rules
 	if !strings.Contains(result, "flat rule") {
@@ -804,7 +804,7 @@ func TestIntegration_FullBuildCompose(t *testing.T) {
 	}
 
 	// Compose final output
-	composed := composeContext(classification, result.Rules, nil, gitCtx.Branch)
+	composed := composeContext(classification, result.Rules, nil, gitCtx.Branch, "")
 
 	t.Logf("Composed output (%d chars):\n%s", len(composed), composed)
 

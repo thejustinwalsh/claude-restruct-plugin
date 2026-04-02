@@ -428,6 +428,32 @@ func (s *Server) handleSessionBootstrap(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, event)
 }
 
+func (s *Server) handleSessionBootstrapEvents(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	events, err := s.db.GetBootstrapEventsForSession(id, 50)
+	if err != nil {
+		writeJSON(w, http.StatusOK, []db.BootstrapEvent{})
+		return
+	}
+	if events == nil {
+		events = []db.BootstrapEvent{}
+	}
+	writeJSON(w, http.StatusOK, events)
+}
+
+func (s *Server) handleSessionContextSelections(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	sels, err := s.db.GetContextSelectionsForSession(id, 200)
+	if err != nil {
+		writeJSON(w, http.StatusOK, []db.ContextSelection{})
+		return
+	}
+	if sels == nil {
+		sels = []db.ContextSelection{}
+	}
+	writeJSON(w, http.StatusOK, sels)
+}
+
 func (s *Server) handleRefinementContextSelections(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
