@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -49,5 +50,8 @@ func TestLoadFromViperDefaultsToDisabled(t *testing.T) {
 	}
 	if cfg.RefinementEnabled() {
 		t.Fatal("expected RefinementEnabled() false by default")
+	}
+	if !slices.Contains(viper.AllKeys(), "features.refinement") {
+		t.Fatal("expected features.refinement to be registered in viper.AllKeys() via SetDefault")
 	}
 }
