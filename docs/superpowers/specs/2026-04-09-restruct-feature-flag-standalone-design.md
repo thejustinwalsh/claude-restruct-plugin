@@ -54,7 +54,6 @@ When `features.refinement == true`:
 | `plugin/skills/refine/SKILL.md` | Unchanged. |
 | `plugin/skills/enable/SKILL.md`, `plugin/skills/disable/SKILL.md` | Unchanged in body — their CLI targets become flag-aware. |
 | `plugin/skills/review-permissions/SKILL.md` | Unchanged. |
-| `plugin/.claude-plugin/README.md` | NEW. ~30 lines. Marketplace description. |
 | `plugin/README.md` | NEW. ~200 lines. User-facing installation and configuration docs. |
 | `README.md` (repo root) | NEW. ~100 lines. Contributor docs for the monorepo. |
 | `cli/internal/config/config_test.go` | NEW (or extend). Defaults + feature flag unmarshal tests. |
@@ -142,10 +141,6 @@ Target length: ~100 lines.
 
 Target length: ~200 lines.
 
-### `plugin/.claude-plugin/README.md` (marketplace)
-
-Short version. Name, one-paragraph description, feature bullets, install command, link to `plugin/README.md`. ~30 lines.
-
 ## Error handling
 
 | Failure | Behavior |
@@ -169,7 +164,8 @@ Short version. Name, one-paragraph description, feature bullets, install command
 
 3. **`cli/cmd/toggle_test.go`**
    - `TestEnableRefusesWhenFlagOff` — flag false, `enable` exits non-zero with the "not yet" message.
-   - `TestEnableWorksWhenFlagOn` — flag true, `enable` creates sentinel file.
+   - `TestEnableWorksWhenFlagOn` — flag true, `enable` succeeds and `toggle.IsEnabled(dataDir)` returns true (sentinel removed).
+   - `TestDisableWorksWhenFlagOn` — flag true, `disable` succeeds and sentinel file exists.
    - `TestStatusShowsFlagStateWhenOff` — `status` mentions feature not yet enabled.
 
 4. **`cli/internal/toggle/toggle_test.go`** — unchanged. The toggle package is lower-level and flag-agnostic.
