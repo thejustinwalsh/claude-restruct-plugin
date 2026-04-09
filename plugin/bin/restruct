@@ -13,10 +13,12 @@ if [ ! -x "$BINARY" ]; then
   exit 1
 fi
 
-# Run binary (not exec) so we can diagnose unexpected exit codes.
+# Run binary and propagate exit code.
+# Exit 0: success. Exit 1: cobra command error (expected). Exit 2: hook block decision.
+# Only flag truly unexpected codes (>= 3 or signals like 139).
 "$BINARY" "$@"
 rc=$?
-if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+if [ "$rc" -gt 2 ]; then
   echo "restruct: unexpected exit code $rc from $BINARY $*" >&2
 fi
 exit $rc
