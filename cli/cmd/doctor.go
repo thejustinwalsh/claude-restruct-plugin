@@ -15,18 +15,19 @@ import (
 
 // DoctorReport is the JSON output of `restruct doctor`.
 type DoctorReport struct {
-	OllamaInstalled  bool   `json:"ollama_installed"`
-	OllamaBinaryPath string `json:"ollama_binary_path,omitempty"`
-	OllamaRunning    bool   `json:"ollama_running"`
-	OllamaVersion    string `json:"ollama_version,omitempty"`
-	MinVersion       string `json:"min_version"`
-	VersionOK        bool   `json:"version_ok"`
-	ModelRequired    string `json:"model_required"`
-	ModelPulled      bool   `json:"model_pulled"`
-	ModelSizeGB      string `json:"model_size_gb,omitempty"`
-	KeepAlive        string `json:"keep_alive"`
-	ConfigPath       string `json:"config_path,omitempty"`
-	AllGood          bool   `json:"all_good"`
+	RefinementFeatureEnabled bool   `json:"refinement_feature_enabled"`
+	OllamaInstalled          bool   `json:"ollama_installed"`
+	OllamaBinaryPath         string `json:"ollama_binary_path,omitempty"`
+	OllamaRunning            bool   `json:"ollama_running"`
+	OllamaVersion            string `json:"ollama_version,omitempty"`
+	MinVersion               string `json:"min_version"`
+	VersionOK                bool   `json:"version_ok"`
+	ModelRequired            string `json:"model_required"`
+	ModelPulled              bool   `json:"model_pulled"`
+	ModelSizeGB              string `json:"model_size_gb,omitempty"`
+	KeepAlive                string `json:"keep_alive"`
+	ConfigPath               string `json:"config_path,omitempty"`
+	AllGood                  bool   `json:"all_good"`
 }
 
 var doctorCmd = &cobra.Command{
@@ -40,10 +41,11 @@ var doctorCmd = &cobra.Command{
 		}
 
 		report := DoctorReport{
-			MinVersion:    cfg.Ollama.MinVersion,
-			ModelRequired: cfg.Ollama.Model,
-			KeepAlive:     cfg.Ollama.KeepAlive.String(),
-			ConfigPath:    configFileUsed(),
+			RefinementFeatureEnabled: cfg.RefinementEnabled(),
+			MinVersion:               cfg.Ollama.MinVersion,
+			ModelRequired:            cfg.Ollama.Model,
+			KeepAlive:                cfg.Ollama.KeepAlive.String(),
+			ConfigPath:               configFileUsed(),
 		}
 
 		// Check ollama binary
@@ -76,8 +78,14 @@ var doctorCmd = &cobra.Command{
 			}
 		}
 
-		report.AllGood = report.OllamaInstalled && report.OllamaRunning &&
-			report.VersionOK && report.ModelPulled
+		if report.RefinementFeatureEnabled {
+			report.AllGood = report.OllamaInstalled && report.OllamaRunning &&
+				report.VersionOK && report.ModelPulled
+		} else {
+			// Non-refinement features (verify, permit, bootstrap, init) don't require
+			// Ollama — when refinement is disabled, the plugin is always "all good".
+			report.AllGood = true
+		}
 
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
