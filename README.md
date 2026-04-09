@@ -69,16 +69,27 @@ Research and design rationale: [`docs/PRD.md`](docs/PRD.md).
 ## Release process
 
 The plugin ships as a self-contained directory (`plugin/`) that Claude Code installs
-from a marketplace URL or local path.
+from a marketplace URL or local path. Platform binaries are built and pushed by CI —
+they are **not** committed manually.
 
-1. Run `pnpm build`. This produces:
-   - `plugin/bin/restruct-darwin-arm64`
-   - `plugin/bin/restruct-darwin-x86_64`
-   - `plugin/bin/restruct-linux-x86_64`
-   - `plugin/bin/restruct` (shell shim that dispatches on `uname`)
-2. Commit the updated binaries. They are part of the shippable plugin and must be in git.
-3. Tag a release and update the `version` in `plugin/.claude-plugin/plugin.json`.
-4. End users install via `/plugin marketplace add thejustinwalsh/claude-restruct-plugin`.
+1. Update the `version` in `plugin/.claude-plugin/plugin.json`.
+2. Tag a release: `git tag v<version> && git push --tags`.
+3. The `Build` workflow (`.github/workflows/build.yml`) runs on the tag:
+   - `pnpm install --frozen-lockfile`
+   - `pnpm build` — produces the cross-compiled platform binaries:
+     - `plugin/bin/restruct-darwin-arm64`
+     - `plugin/bin/restruct-darwin-x86_64`
+     - `plugin/bin/restruct-linux-x86_64`
+   - `git add -f plugin/bin/restruct-*` (the `-f` bypasses the gitignore that
+     excludes platform binaries in normal dev)
+   - Commits as `build: release binaries for v<version>` and pushes to `main`
+4. End users install via `/plugin marketplace add thejustinwalsh/claude-restruct-plugin`
+   and get the CI-built binaries.
+
+For local development, `pnpm build` produces the same binaries in `plugin/bin/` but
+they stay ignored by git — only the `plugin/bin/restruct` shell shim is tracked.
+You can also manually trigger the `Build` workflow via `workflow_dispatch` without
+a tag if you need to refresh the published binaries outside a release.
 
 ## Constraints
 
