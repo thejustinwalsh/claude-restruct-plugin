@@ -30,8 +30,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Build all platform binaries
-        run: pnpm build
+      - name: Build all platform binaries (release mode)
+        run: pnpm release
 
       - name: Commit binaries
         run: |
@@ -40,3 +40,15 @@ jobs:
           git add -f plugin/bin/restruct-*
           git commit -m "build: release binaries for ${GITHUB_REF_NAME:-manual}" || echo "No changes to commit"
           git push
+
+      - name: Dispatch aggregator version bump
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.AGGREGATOR_DISPATCH_PAT }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Dispatching bump-plugin.yml in thejustinwalsh/claude-plugins for restruct → ${VERSION}"
+          gh workflow run bump-plugin.yml \
+            --repo thejustinwalsh/claude-plugins \
+            -f plugin=restruct \
+            -f version="${VERSION}"
