@@ -1,5 +1,5 @@
 ---
-name: review-permissions
+name: review-permissions-restruct
 description: Review tool permission decisions across sessions and propose auto-approval rules. Analyzes which tools the user consistently approves, then suggests additions to .restruct/permissions.yaml to eliminate repetitive permission dialogs.
 ---
 
@@ -89,4 +89,4 @@ Report:
 - How many decisions were marked as reviewed
 - Estimated permission dialogs that will be eliminated per session based on historical frequency
 
-Remind the user they can run `/restruct:review-permissions` again after more sessions to continue improving auto-approvals.
+Remind the user they can run `/restruct:review-permissions-restruct` again after more sessions to continue improving auto-approvals.

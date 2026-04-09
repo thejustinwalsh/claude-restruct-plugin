@@ -1,5 +1,5 @@
 ---
-name: init
+name: init-restruct
 description: Generate a minimal, research-backed CLAUDE.md for this project. Analyzes the codebase for non-obvious commands and conventions, interviews you for team knowledge, and produces a concise file that stays under 30 rules.
 ---
 

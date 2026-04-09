@@ -1,5 +1,5 @@
 ---
-name: enable
+name: enable-restruct
 description: Enable restruct prompt refinement. Re-enables the local LLM preprocessing of prompts.
 ---
 

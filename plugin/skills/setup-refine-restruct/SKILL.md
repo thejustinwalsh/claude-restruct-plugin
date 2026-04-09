@@ -1,5 +1,5 @@
 ---
-name: setup-refine
+name: setup-refine-restruct
 description: Install Ollama, pull the right model for your hardware, warm it up, and enable the restruct prompt refinement pipeline. Only runs when features.refinement is enabled in config.yaml.
 ---
 

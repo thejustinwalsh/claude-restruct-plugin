@@ -1,5 +1,5 @@
 ---
-name: setup-verify
+name: setup-verify-restruct
 description: Discover lint/typecheck/test/build commands in the current project and write them to .restruct/verify.yaml so Claude Code automatically runs them on task completion.
 ---
 

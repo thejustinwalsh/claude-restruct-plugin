@@ -13,7 +13,7 @@ CLAUDE.md generation, and — optionally — local-LLM prompt refinement.
 | **Verification** | On | Runs lint/test/build/typecheck after Claude completes a task. Config: `.restruct/verify.yaml`. Hooks: `TaskCompleted`, `Stop`. |
 | **Tool permissions** | On | Intercepts `PreToolUse` to auto-approve safe commands and log decisions. Config: `.restruct/permissions.yaml`. |
 | **Rule bootstrapping** | On | Parses CLAUDE.md / agents.md on `SessionStart` and `FileChanged` into a deep-context map used by refinement (and available for inspection). |
-| **CLAUDE.md generation** | On-demand | `/restruct:init` generates a minimal, research-backed CLAUDE.md for your project. |
+| **CLAUDE.md generation** | On-demand | `/restruct:init-restruct` generates a minimal, research-backed CLAUDE.md for your project. |
 | **Snapshots** | On | Takes a file snapshot on task creation so verification has a baseline to diff against. |
 | **Prompt refinement** | **Off (feature-flagged)** | Transforms casual prompts into structured, rules-aware instructions via a local Ollama model before Claude sees them. Not ready for external rollout yet — opt in via `features.refinement: true`. |
 
@@ -55,7 +55,7 @@ ${CLAUDE_PLUGIN_ROOT}/bin/restruct doctor
 Run the master setup flow in any project where you've installed the plugin:
 
 ```
-/restruct:setup
+/restruct:setup-restruct
 ```
 
 This walks through four phases:
@@ -67,10 +67,10 @@ This walks through four phases:
 
 Each phase is also invokable standalone so you can re-run one later:
 
-- `/restruct:setup-rules` — regenerate or audit CLAUDE.md
-- `/restruct:setup-verify` — rediscover verify commands
-- `/restruct:setup-permissions` — refresh the permit config
-- `/restruct:setup-refine` — install Ollama and enable refinement (feature-flagged)
+- `/restruct:setup-rules-restruct` — regenerate or audit CLAUDE.md
+- `/restruct:setup-verify-restruct` — rediscover verify commands
+- `/restruct:setup-permissions-restruct` — refresh the permit config
+- `/restruct:setup-refine-restruct` — install Ollama and enable refinement (feature-flagged)
 
 ## Configuration
 
@@ -107,7 +107,7 @@ and because the pipeline is still being tuned for external rollout. To opt in:
 2. Run the refinement setup skill:
 
    ```
-   /restruct:setup-refine
+   /restruct:setup-refine-restruct
    ```
 
    This installs Ollama (via Homebrew on macOS or the official installer on Linux),

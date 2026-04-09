@@ -1,11 +1,11 @@
 ---
-name: setup-permissions
+name: setup-permissions-restruct
 description: Write an initial .restruct/permissions.yaml with safe defaults so the restruct permit hook can auto-approve common tool use without repeated dialogs.
 ---
 
 Generate an initial permissions config that auto-approves safe, common tool operations
 inside the project root. Pattern analysis of historical decisions is handled separately
-by the `/restruct:review-permissions` skill — this skill is for first-time seeding.
+by the `/restruct:review-permissions-restruct` skill — this skill is for first-time seeding.
 
 ## Step 1: Detect the project root
 
@@ -35,7 +35,7 @@ Create `.restruct/permissions.yaml` with:
 
 ```yaml
 # Auto-approve common safe operations inside the project root.
-# Use /restruct:review-permissions later to expand this from historical decision data.
+# Use /restruct:review-permissions-restruct later to expand this from historical decision data.
 
 allowed_paths:
   - "."   # reads/writes inside the project root
@@ -64,5 +64,5 @@ Only include the lines relevant to the ecosystems you actually detected.
 
 ## Step 5: Show the user the result
 
-Print the written file and suggest they run `/restruct:review-permissions` after a few
+Print the written file and suggest they run `/restruct:review-permissions-restruct` after a few
 sessions to expand it based on real usage patterns.

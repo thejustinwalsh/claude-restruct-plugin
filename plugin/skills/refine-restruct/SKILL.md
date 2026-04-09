@@ -1,5 +1,5 @@
 ---
-name: refine
+name: refine-restruct
 description: Manually refine a prompt through the local LLM meta-prompt pipeline. Transforms a casual developer request into a structured, rules-aware prompt using a local Ollama model. Only works when features.refinement is enabled in config.yaml.
 ---
 
