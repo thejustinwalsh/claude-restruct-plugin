@@ -4,14 +4,29 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/tjw/restruct/internal/config"
 	"github.com/tjw/restruct/internal/db"
 	"github.com/tjw/restruct/internal/toggle"
 )
 
+func loadConfigOrDefaults() *config.Config {
+	cfg, err := config.LoadFromViper()
+	if err != nil || cfg == nil {
+		return config.Defaults()
+	}
+	return cfg
+}
+
 var enableCmd = &cobra.Command{
-	Use:   "enable",
-	Short: "Enable restruct prompt refinement",
+	Use:           "enable",
+	Short:         "Enable restruct prompt refinement",
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := config.GuardRefinement(loadConfigOrDefaults()); err != nil {
+			// root.go's Execute() prints the error and exits non-zero.
+			return err
+		}
 		if err := toggle.Enable(db.DataDir()); err != nil {
 			return err
 		}
@@ -21,9 +36,14 @@ var enableCmd = &cobra.Command{
 }
 
 var disableCmd = &cobra.Command{
-	Use:   "disable",
-	Short: "Disable restruct prompt refinement (passthrough all prompts)",
+	Use:           "disable",
+	Short:         "Disable restruct prompt refinement (passthrough all prompts)",
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := config.GuardRefinement(loadConfigOrDefaults()); err != nil {
+			return err
+		}
 		if err := toggle.Disable(db.DataDir()); err != nil {
 			return err
 		}
@@ -37,6 +57,12 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show whether restruct is enabled or disabled",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg := loadConfigOrDefaults()
+		if !cfg.RefinementEnabled() {
+			fmt.Fprintln(cmd.OutOrStderr(), "restruct: refinement feature not yet enabled in this release")
+			fmt.Fprintln(cmd.OutOrStderr(), "restruct: set features.refinement: true in config.yaml to opt in")
+			return nil
+		}
 		if toggle.IsEnabled(db.DataDir()) {
 			fmt.Fprintln(cmd.OutOrStderr(), "restruct: enabled")
 		} else {
