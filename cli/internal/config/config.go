@@ -8,7 +8,12 @@ import (
 	"github.com/spf13/viper"
 )
 
+type FeaturesConfig struct {
+	Refinement bool `mapstructure:"refinement"`
+}
+
 type Config struct {
+	Features   FeaturesConfig   `mapstructure:"features"`
 	Ollama     OllamaConfig     `mapstructure:"ollama"`
 	Refinement RefinementConfig `mapstructure:"refinement"`
 	Cache      CacheConfig      `mapstructure:"cache"`
@@ -51,6 +56,7 @@ type RulesConfig struct {
 func Defaults() *Config {
 	home, _ := os.UserHomeDir()
 	return &Config{
+		Features: FeaturesConfig{Refinement: false},
 		Ollama: OllamaConfig{
 			URL:            "http://localhost:11434",
 			Model:          "qwen2.5-coder:14b",
@@ -107,4 +113,10 @@ func LoadFromViper() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// RefinementEnabled reports whether prompt refinement is enabled in this release.
+// When false, the refine hook short-circuits to passthrough and toggle commands refuse.
+func (c *Config) RefinementEnabled() bool {
+	return c.Features.Refinement
 }
