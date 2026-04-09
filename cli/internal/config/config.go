@@ -88,6 +88,7 @@ func LoadFromViper() (*Config, error) {
 	cfg := Defaults()
 
 	// Set defaults in viper so they get picked up
+	viper.SetDefault("features.refinement", cfg.Features.Refinement)
 	viper.SetDefault("ollama.url", cfg.Ollama.URL)
 	viper.SetDefault("ollama.model", cfg.Ollama.Model)
 	viper.SetDefault("ollama.connect_timeout", cfg.Ollama.ConnectTimeout)
