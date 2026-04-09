@@ -1,4 +1,5 @@
 ---
+name: review-permissions
 description: Review tool permission decisions across sessions and propose auto-approval rules. Analyzes which tools the user consistently approves, then suggests additions to .restruct/permissions.yaml to eliminate repetitive permission dialogs.
 ---
 

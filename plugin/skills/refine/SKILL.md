@@ -1,4 +1,7 @@
-Manually refine the current prompt through the local LLM meta-prompt pipeline.
+---
+name: refine
+description: Manually refine a prompt through the local LLM meta-prompt pipeline. Transforms a casual developer request into a structured, rules-aware prompt using a local Ollama model. Only works when features.refinement is enabled in config.yaml.
+---
 
 This skill transforms a casual developer request into a structured, rules-aware prompt using a local Ollama model. It reads project rules from agents.md/CLAUDE.md, gathers git context, and produces XML-structured output with objective, constraints, workflow, uncertainty protocol, and anti-patterns.
 
