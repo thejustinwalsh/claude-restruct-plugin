@@ -75,9 +75,11 @@ var modelLoadCmd = &cobra.Command{
 	Short: "Preload model into memory with configured keep_alive",
 	Long:  `Sends a warm-up request to load the model into GPU/RAM and sets keep_alive so it stays resident.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := config.LoadFromViper()
-		if cfg == nil {
-			cfg = config.Defaults()
+		cfg := loadConfigOrDefaults()
+
+		if !cfg.RefinementEnabled() {
+			fmt.Fprintln(cmd.ErrOrStderr(), "restruct: model load skipped — refinement feature not yet enabled")
+			return nil
 		}
 
 		model := cfg.Ollama.Model
