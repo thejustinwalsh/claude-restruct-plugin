@@ -56,16 +56,24 @@ are appended as additional context that guides Claude's behavior.`,
 			return nil
 		}
 
-		// Check if restruct is globally disabled
-		if !toggle.IsEnabled(db.DataDir()) {
-			slog.Debug("restruct disabled, passing through")
-			return hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
-		}
-
 		cfg, err := config.LoadFromViper()
 		if err != nil {
 			slog.Warn("config error, using defaults", "error", err)
 			cfg = config.Defaults()
+		}
+
+		// Feature flag gate: when refinement is not yet enabled in this release,
+		// passthrough immediately. The sentinel toggle is only consulted when the
+		// flag is on.
+		if !cfg.RefinementEnabled() {
+			slog.Debug("refinement feature disabled, passing through")
+			return hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
+		}
+
+		// Check if restruct is globally disabled (runtime sentinel toggle)
+		if !toggle.IsEnabled(db.DataDir()) {
+			slog.Debug("restruct disabled, passing through")
+			return hook.WriteOutput(os.Stdout, hook.PassthroughOutput())
 		}
 
 		cwd := input.Cwd
