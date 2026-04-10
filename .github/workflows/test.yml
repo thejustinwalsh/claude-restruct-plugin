@@ -27,4 +27,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Release-mode Go build embeds web/dist via //go:embed all:dist
+      # (see cli/internal/server/embed_release.go). Build the web and stage it
+      # at the embed location so `go test ./...` can compile.
+      - name: Build web and stage dist for Go embed
+        run: |
+          pnpm --filter web build
+          mkdir -p cli/internal/server/dist
+          cp -r web/dist/. cli/internal/server/dist/
+
       - run: pnpm test
