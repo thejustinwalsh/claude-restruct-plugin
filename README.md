@@ -83,8 +83,8 @@ they are **not** committed manually.
    - `git add -f plugin/bin/restruct-*` (the `-f` bypasses the gitignore that
      excludes platform binaries in normal dev)
    - Commits as `build: release binaries for v<version>` and pushes to `main`
-4. End users install via `/plugin marketplace add thejustinwalsh/claude-restruct-plugin`
-   and get the CI-built binaries.
+4. End users install via `/plugin marketplace add thejustinwalsh/claude-plugins`
+   then `/plugin install restruct@thejustinwalsh` and get the CI-built binaries.
 
 For local development, `pnpm build` produces the same binaries in `plugin/bin/` but
 they stay ignored by git — only the `plugin/bin/restruct` shell shim is tracked.

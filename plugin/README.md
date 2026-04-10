@@ -30,11 +30,11 @@ No other runtime dependencies — the `restruct` binary is pure Go with no CGO.
 
 ## Installation
 
-Add the plugin from the marketplace in Claude Code:
+Add the marketplace in Claude Code, then install the plugin:
 
 ```
-/plugin marketplace add thejustinwalsh/claude-restruct-plugin
-/plugin install restruct
+/plugin marketplace add thejustinwalsh/claude-plugins
+/plugin install restruct@thejustinwalsh
 ```
 
 Or install from a local path while developing:
